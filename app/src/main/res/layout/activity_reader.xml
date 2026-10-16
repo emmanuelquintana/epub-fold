@@ -4,10 +4,69 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <com.emmanuel.epubfold.BookView
-        android:id="@+id/book"
+    <LinearLayout
+        android:id="@+id/content"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:orientation="horizontal">
+
+        <!-- Panel lateral (Fold abierto): índice, marcadores o notas fijos en una mitad -->
+        <LinearLayout
+            android:id="@+id/sidePanel"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/sideTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="sans-serif-medium"
+                android:maxLines="1"
+                android:paddingHorizontal="20dp"
+                android:paddingTop="12dp"
+                android:textSize="20sp" />
+
+            <FrameLayout
+                android:id="@+id/sideTabs"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="10dp" />
+
+            <TextView
+                android:id="@+id/sideStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="20dp"
+                android:paddingBottom="6dp"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/sideList"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:paddingBottom="24dp" />
+        </LinearLayout>
+
+        <View
+            android:id="@+id/sideDivider"
+            android:layout_width="1px"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <com.emmanuel.epubfold.BookView
+            android:id="@+id/book"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1" />
+    </LinearLayout>
 
     <ProgressBar
         android:id="@+id/loading"
@@ -61,6 +120,17 @@
                 android:maxLines="1"
                 android:textSize="12sp" />
         </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/btnPanel"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_marginEnd="8dp"
+            android:contentDescription="Panel lateral"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_panel"
+            android:visibility="gone" />
 
         <ImageButton
             android:id="@+id/btnBookmark"
@@ -134,6 +204,19 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/toolListen"
+                    style="@style/ReaderTool">
+                    <ImageView
+                        android:id="@+id/iconListen"
+                        style="@style/ReaderToolIcon"
+                        android:src="@drawable/ic_headphones" />
+                    <TextView
+                        android:id="@+id/labelListen"
+                        style="@style/ReaderToolLabel"
+                        android:text="Escuchar" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:id="@+id/toolThemes"
                     style="@style/ReaderTool">
                     <ImageView
@@ -143,7 +226,7 @@
                     <TextView
                         android:id="@+id/labelThemes"
                         style="@style/ReaderToolLabel"
-                        android:text="Temas y ajustes" />
+                        android:text="Ajustes" />
                 </LinearLayout>
             </LinearLayout>
 
@@ -173,5 +256,49 @@
                 android:maxLines="1"
                 android:textSize="12sp" />
         </LinearLayout>
+    </LinearLayout>
+    <!-- Mini reproductor de lectura en voz alta -->
+    <LinearLayout
+        android:id="@+id/player"
+        android:layout_width="wrap_content"
+        android:layout_height="52dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="20dp"
+        android:elevation="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/playerToggle"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Reproducir o pausar"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_pause" />
+
+        <TextView
+            android:id="@+id/playerRate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="6dp"
+            android:fontFamily="sans-serif-medium"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp"
+            android:text="1×"
+            android:textSize="14sp" />
+
+        <ImageButton
+            android:id="@+id/playerClose"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Detener"
+            android:padding="9dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_close" />
     </LinearLayout>
 </FrameLayout>

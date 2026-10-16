@@ -4,6 +4,8 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -11,6 +13,8 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
+import android.graphics.RadialGradient
+import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.text.TextPaint
@@ -60,7 +64,15 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         fun onSizeReady(w: Int, h: Int)
         fun onPageChanged(page: Int)
         fun onCenterTap()
+
+        /** La selección cambió. [settled] = el dedo se levantó (mostrar menú). */
+        fun onSelectionChanged(sel: TextSelection?, anchor: RectF?, settled: Boolean) {}
+
+        /** Toque sobre el texto; devolver true si se gestionó (p. ej. un subrayado). */
+        fun onTextTap(chapter: Int, offset: Int): Boolean = false
     }
+
+    data class TextSelection(val chapter: Int, val start: Int, val end: Int)
 
     var listener: Listener? = null
     var chapterTitle: (Int) -> String = { "" }
@@ -77,10 +89,24 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
 
     var animation: PageAnimation = PageAnimation.CURL
 
+    /** Subrayados guardados de un capítulo. */
+    var highlightsFor: (Int) -> List<Highlight> = { emptyList() }
+
+    /** Frase que se está leyendo en voz alta. */
+    var speakRange: Triple<Int, Int, Int>? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var selection: TextSelection? = null
+        private set
+
     var accentColor: Int = 0xFFFF9500.toInt()
         set(value) {
             field = value
             ribbonPaint.color = value
+            applyTheme()
             invalidate()
         }
 
@@ -93,7 +119,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     var currentPage = 0
         private set
 
-    var theme: ReaderTheme = ReaderTheme.ORIGINAL
+    var theme: ThemeColors = ThemeColors(0xFFFFFFFF.toInt(), 0xFF1C1C1E.toInt(), 0xFF8E8E93.toInt(), false, false)
         set(value) {
             field = value
             applyTheme()
@@ -121,6 +147,14 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     private val slideShadowPaint = Paint()
     private val ribbonPath = Path()
     private val highlightPath = Path()
+    private val texturePaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val vignettePaint = Paint()
+    private val markPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val selectionPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val speakPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var textureLight: Bitmap? = null
+    private var textureDark: Bitmap? = null
 
     // ---- estado del giro de página ----
     private class Curl(
@@ -155,6 +189,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     private var dragging = false
     private var movedFar = false
     private var gestureConsumed = false
+    private var selDragging = 0
     private var velocity: VelocityTracker? = null
     private var animator: ValueAnimator? = null
 
@@ -193,6 +228,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     fun goTo(page: Int) {
         animator?.cancel()
         curl = null
+        if (selection != null) clearSelection()
         currentPage = align(page)
         invalidate()
         listener?.onPageChanged(currentPage)
@@ -215,6 +251,19 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         paginator?.paint?.linkColor = theme.text
         flapPaint.color = theme.paper
         highlightPaint.color = if (theme.isDark) 0x66FFB340 else 0x66FFD60A
+        selectionPaint.color = (accentColor and 0x00FFFFFF) or 0x4D000000
+        handlePaint.color = accentColor
+        speakPaint.color = (accentColor and 0x00FFFFFF) or (if (theme.isDark) 0x40000000 else 0x30000000)
+        if (theme.texture) {
+            val bmp = if (theme.isDark) {
+                textureDark ?: makeTexture(true).also { textureDark = it }
+            } else {
+                textureLight ?: makeTexture(false).also { textureLight = it }
+            }
+            texturePaint.shader = BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+        } else {
+            texturePaint.shader = null
+        }
         flapPaint.setShadowLayer(14 * density, 0f, 0f, if (theme.isDark) 0xAA000000.toInt() else 0x55000000)
         buildSpineShaders()
     }
@@ -236,6 +285,48 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
             0f, 0f, sw * 0.5f, 0f,
             intArrayOf(mid, Color.TRANSPARENT), null, Shader.TileMode.CLAMP
         )
+        // Viñeta suave de papel (sólo con textura); centrada en la página izquierda/única
+        vignettePaint.shader = RadialGradient(
+            m.pageW / 2, m.height / 2, max(m.pageW, m.height) * 0.78f,
+            intArrayOf(Color.TRANSPARENT, Color.TRANSPARENT, if (theme.isDark) 0x30000000 else 0x1C5A3A10),
+            floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP
+        )
+    }
+
+    /** Ruido y fibras sutiles para simular papel. */
+    private fun makeTexture(dark: Boolean): Bitmap {
+        val size = 256
+        val rnd = java.util.Random(11)
+        val px = IntArray(size * size)
+        for (i in px.indices) {
+            val n = rnd.nextGaussian()
+            val a = (abs(n) * (if (dark) 7 else 9)).toInt().coerceAtMost(34)
+            px[i] = if (n > 0) (a shl 24) or 0x3A2A15 else (a shl 24) or 0xFFFFFF
+        }
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        bmp.setPixels(px, 0, size, 0, 0, size, size)
+        val c = Canvas(bmp)
+        val fiber = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 0.8f
+            color = if (dark) 0x0EFFFFFF else 0x105A3A10
+        }
+        val path = Path()
+        repeat(46) {
+            val x = rnd.nextFloat() * size
+            val y = rnd.nextFloat() * size
+            val len = 8 + rnd.nextFloat() * 26
+            val ang = rnd.nextFloat() * 6.283f
+            path.rewind()
+            path.moveTo(x, y)
+            path.quadTo(
+                x + kotlin.math.cos(ang) * len / 2 + rnd.nextFloat() * 6 - 3,
+                y + kotlin.math.sin(ang) * len / 2 + rnd.nextFloat() * 6 - 3,
+                x + kotlin.math.cos(ang) * len, y + kotlin.math.sin(ang) * len
+            )
+            c.drawPath(path, fiber)
+        }
+        return bmp
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -261,6 +352,162 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
             drawSlide(canvas, k, m)
         } else {
             drawCurl(canvas, k, m)
+        }
+        if (k == null) drawHandles(canvas)
+    }
+
+    // ------------------------------------------------------------------ selección
+
+    private fun visiblePages(): List<Pair<Int, Float>> {
+        val m = metrics ?: return emptyList()
+        return if (spread) listOf(currentPage to 0f, currentPage + 1 to m.pageW) else listOf(currentPage to 0f)
+    }
+
+    /** Capítulo y carácter bajo el punto (x, y). Con [strict] exige estar sobre el texto. */
+    fun hitTest(x: Float, y: Float, strict: Boolean = false): Pair<Int, Int>? {
+        val p = paginator ?: return null
+        val m = metrics ?: return null
+        val right = spread && x >= m.pageW
+        val idx = if (right) currentPage + 1 else currentPage
+        val left = if (right) m.pageW else 0f
+        val page = p.pages.getOrNull(idx) ?: return null
+        val layout = p.layouts[page.chapter] ?: return null
+        if (page.endLine <= page.startLine) return null
+        val top = layout.getLineTop(page.startLine)
+        val ly = y - m.marginTop + top
+        val lx = x - left - m.marginH
+        if (strict) {
+            if (lx < 0 || lx > m.contentW) return null
+            if (ly < top || ly > layout.getLineBottom(page.endLine - 1)) return null
+        }
+        val line = layout.getLineForVertical(ly.toInt()).coerceIn(page.startLine, page.endLine - 1)
+        if (strict && (lx < layout.getLineLeft(line) || lx > layout.getLineRight(line))) return null
+        return page.chapter to layout.getOffsetForHorizontal(line, lx)
+    }
+
+    /** Posición en pantalla del cursor en [offset]: x, arriba, abajo. */
+    private fun caret(chapter: Int, offset: Int, isEnd: Boolean): FloatArray? {
+        val p = paginator ?: return null
+        val m = metrics ?: return null
+        for ((idx, left) in visiblePages()) {
+            val page = p.pages.getOrNull(idx) ?: continue
+            if (page.chapter != chapter || page.endLine <= page.startLine) continue
+            val layout = p.layouts[chapter] ?: continue
+            val len = layout.text.length
+            val o = (if (isEnd) offset - 1 else offset).coerceIn(0, len)
+            val line = layout.getLineForOffset(o)
+            if (line < page.startLine || line >= page.endLine) continue
+            val x = if (isEnd && offset >= layout.getLineEnd(line)) layout.getLineRight(line)
+            else layout.getPrimaryHorizontal(offset.coerceIn(0, len))
+            val base = m.marginTop - layout.getLineTop(page.startLine)
+            return floatArrayOf(left + m.marginH + x, base + layout.getLineTop(line), base + layout.getLineBottom(line))
+        }
+        return null
+    }
+
+    private fun drawHandles(c: Canvas) {
+        val sel = selection ?: return
+        val r = 6.5f * density
+        caret(sel.chapter, sel.start, false)?.let { (x, top, bottom) ->
+            c.drawRect(x - density, top, x + density, bottom, handlePaint)
+            c.drawCircle(x, top - r + density, r, handlePaint)
+        }
+        caret(sel.chapter, sel.end, true)?.let { (x, top, bottom) ->
+            c.drawRect(x - density, top, x + density, bottom, handlePaint)
+            c.drawCircle(x, bottom + r - density, r, handlePaint)
+        }
+    }
+
+    /** 1 = asa inicial, 2 = asa final, 0 = ninguna. */
+    private fun handleAt(x: Float, y: Float): Int {
+        val sel = selection ?: return 0
+        val tol = 26 * density
+        caret(sel.chapter, sel.end, true)?.let { (hx, top, bottom) ->
+            if (abs(x - hx) < tol && y > top - tol && y < bottom + tol * 1.6f) return 2
+        }
+        caret(sel.chapter, sel.start, false)?.let { (hx, top, bottom) ->
+            if (abs(x - hx) < tol && y > top - tol * 1.6f && y < bottom + tol) return 1
+        }
+        return 0
+    }
+
+    private fun selectionAnchor(): RectF? {
+        val sel = selection ?: return null
+        val a = caret(sel.chapter, sel.start, false)
+        val b = caret(sel.chapter, sel.end, true)
+        if (a == null && b == null) return null
+        val top = a?.get(1) ?: 0f
+        val bottom = b?.get(2) ?: height.toFloat()
+        val l = minOf(a?.get(0) ?: 0f, b?.get(0) ?: width.toFloat())
+        val r = maxOf(a?.get(0) ?: 0f, b?.get(0) ?: width.toFloat())
+        return RectF(l, top, r, bottom)
+    }
+
+    /** Rectángulo en pantalla que ocupa un rango de texto (si está visible). */
+    fun rangeAnchor(chapter: Int, start: Int, end: Int): RectF? {
+        val a = caret(chapter, start, false)
+        val b = caret(chapter, end, true)
+        if (a == null && b == null) return null
+        return RectF(
+            minOf(a?.get(0) ?: 0f, b?.get(0) ?: width.toFloat()),
+            a?.get(1) ?: 0f,
+            maxOf(a?.get(0) ?: 0f, b?.get(0) ?: width.toFloat()),
+            b?.get(2) ?: height.toFloat()
+        )
+    }
+
+    private fun notifySelection(settled: Boolean) {
+        listener?.onSelectionChanged(selection, selectionAnchor(), settled)
+    }
+
+    fun clearSelection() {
+        if (selection == null) return
+        selection = null
+        invalidate()
+        notifySelection(true)
+    }
+
+    private fun isWordChar(ch: Char) = ch.isLetterOrDigit() || ch == '\'' || ch == '’' || ch == '-'
+
+    private val longPress = Runnable { onLongPress() }
+
+    private fun onLongPress() {
+        if (dragging || movedFar || curl != null) return
+        val p = paginator ?: return
+        val (ch, off) = hitTest(downX, downY, strict = true) ?: return
+        val text = p.textOf(ch)
+        var s = off.coerceIn(0, text.length)
+        var e = s
+        while (s > 0 && isWordChar(text[s - 1])) s--
+        while (e < text.length && isWordChar(text[e])) e++
+        if (e == s) {
+            if (e < text.length && !text[e].isWhitespace()) e++ else return
+        }
+        selection = TextSelection(ch, s, e)
+        selDragging = 2
+        gestureConsumed = true
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        parent?.requestDisallowInterceptTouchEvent(true)
+        invalidate()
+        notifySelection(false)
+    }
+
+    private fun moveHandle(x: Float, y: Float) {
+        val sel = selection ?: return
+        val (ch, off) = hitTest(x, y - 8 * density) ?: return
+        if (ch != sel.chapter) return
+        var s = sel.start
+        var e = sel.end
+        if (selDragging == 1) s = off else e = off
+        if (s > e) {
+            val tmp = s; s = e; e = tmp
+            selDragging = 3 - selDragging
+        }
+        if (s == e) return
+        if (s != sel.start || e != sel.end) {
+            selection = TextSelection(ch, s, e)
+            invalidate()
+            notifySelection(false)
         }
     }
 
@@ -311,6 +558,13 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         c.save()
         c.clipRect(left, 0f, left + m.pageW, h)
         c.drawRect(left, 0f, left + m.pageW, h, paperPaint)
+        if (theme.texture) {
+            c.drawRect(left, 0f, left + m.pageW, h, texturePaint)
+            c.save()
+            c.translate(left, 0f)
+            c.drawRect(0f, 0f, m.pageW, h, vignettePaint)
+            c.restore()
+        }
         val p = paginator
         if (p != null && index >= 0 && index < p.pageCount) {
             val page = p.pages[index]
@@ -325,6 +579,36 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                 c.save()
                 c.translate(left + m.marginH, m.marginTop - top)
                 c.clipRect(0f, top, m.contentW.toFloat(), bottom)
+                val len = layout.text.length
+                // Subrayados guardados
+                for (hlt in highlightsFor(page.chapter)) {
+                    val s0 = hlt.start.coerceIn(0, len)
+                    val s1 = hlt.end.coerceIn(0, len)
+                    if (s1 <= s0 || s1 < page.startChar) continue
+                    highlightPath.rewind()
+                    layout.getSelectionPath(s0, s1, highlightPath)
+                    val col = HIGHLIGHT_COLORS.getOrElse(hlt.color) { HIGHLIGHT_COLORS[0] }
+                    markPaint.color = (col and 0x00FFFFFF) or (if (theme.isDark) 0x5C000000 else 0x66000000)
+                    c.drawPath(highlightPath, markPaint)
+                }
+                speakRange?.let { sr ->
+                    if (sr.first == page.chapter) {
+                        val s0 = sr.second.coerceIn(0, len)
+                        val s1 = sr.third.coerceIn(0, len)
+                        if (s1 > s0) {
+                            highlightPath.rewind()
+                            layout.getSelectionPath(s0, s1, highlightPath)
+                            c.drawPath(highlightPath, speakPaint)
+                        }
+                    }
+                }
+                selection?.let { sel ->
+                    if (sel.chapter == page.chapter) {
+                        highlightPath.rewind()
+                        layout.getSelectionPath(sel.start.coerceIn(0, len), sel.end.coerceIn(0, len), highlightPath)
+                        c.drawPath(highlightPath, selectionPaint)
+                    }
+                }
                 val hl = highlight
                 if (hl != null && hl.first == page.chapter) {
                     val len = layout.text.length
@@ -338,6 +622,16 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                 }
                 layout.draw(c)
                 c.restore()
+                // Indicador de nota en el margen
+                for (hlt in highlightsFor(page.chapter)) {
+                    if (hlt.note.isBlank()) continue
+                    val line = layout.getLineForOffset(hlt.start.coerceIn(0, layout.text.length))
+                    if (line < page.startLine || line >= page.endLine) continue
+                    val cy = m.marginTop - top + (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f
+                    val cx = left + m.pageW - m.marginH / 2
+                    markPaint.color = HIGHLIGHT_COLORS.getOrElse(hlt.color) { HIGHLIGHT_COLORS[0] }
+                    c.drawCircle(cx, cy, 4.5f * density, markPaint)
+                }
             }
         }
         if (p != null && index >= 0 && index < p.pageCount && isBookmarked(index)) {
@@ -512,11 +806,28 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                 gestureConsumed = false
                 velocity?.recycle()
                 velocity = VelocityTracker.obtain().also { it.addMovement(e) }
+                selDragging = 0
+                if (selection != null) {
+                    selDragging = handleAt(e.x, e.y)
+                    if (selDragging != 0) {
+                        parent?.requestDisallowInterceptTouchEvent(true)
+                        notifySelection(false)
+                    }
+                    return true
+                }
+                postDelayed(longPress, ViewConfiguration.getLongPressTimeout().toLong())
             }
             MotionEvent.ACTION_MOVE -> {
                 velocity?.addMovement(e)
                 val dx = e.x - downX
-                if (abs(dx) > touchSlop || abs(e.y - downY) > touchSlop) movedFar = true
+                if (abs(dx) > touchSlop || abs(e.y - downY) > touchSlop) {
+                    if (!movedFar) removeCallbacks(longPress)
+                    movedFar = true
+                }
+                if (selection != null) {
+                    if (selDragging != 0) moveHandle(e.x, e.y)
+                    return true
+                }
                 if (!dragging && !gestureConsumed && abs(dx) > touchSlop) {
                     val forward = dx < 0
                     if ((forward && canForward()) || (!forward && canBackward())) {
@@ -551,6 +862,15 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 velocity?.addMovement(e)
+                removeCallbacks(longPress)
+                if (selection != null) {
+                    if (selDragging == 0 && !movedFar && e.actionMasked == MotionEvent.ACTION_UP) clearSelection()
+                    else notifySelection(true)
+                    selDragging = 0
+                    velocity?.recycle()
+                    velocity = null
+                    return true
+                }
                 if (dragging) {
                     val k = curl
                     if (k != null) {
@@ -569,6 +889,12 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                     }
                 } else if (e.actionMasked == MotionEvent.ACTION_UP && !movedFar && e.eventTime - downTime < 500) {
                     val w = width
+                    val hit = hitTest(e.x, e.y, strict = true)
+                    if (hit != null && listener?.onTextTap(hit.first, hit.second) == true) {
+                        velocity?.recycle()
+                        velocity = null
+                        return true
+                    }
                     when {
                         e.x < w * 0.22f -> turn(false)
                         e.x > w * 0.78f -> turn(true)
@@ -586,6 +912,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     /** Pasa página con animación (toques en los bordes y teclas de volumen). */
     fun turn(forward: Boolean) {
         animator?.end()
+        if (selection != null) clearSelection()
         if (paginator == null) return
         if (forward && !canForward()) return
         if (!forward && !canBackward()) return

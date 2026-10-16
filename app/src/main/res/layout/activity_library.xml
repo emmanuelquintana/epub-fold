@@ -24,6 +24,26 @@
             android:layout_width="match_parent"
             android:layout_height="52dp">
 
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_gravity="start"
+                android:layout_marginStart="16dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/stats"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:background="@drawable/bg_circle_fill"
+                    android:contentDescription="Estadísticas"
+                    android:padding="8dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_chart"
+                    app:tint="@color/accent" />
+            </LinearLayout>
+
             <TextView
                 android:id="@+id/smallTitle"
                 style="@style/Text.Headline"
@@ -32,6 +52,19 @@
                 android:layout_gravity="center"
                 android:alpha="0"
                 android:text="@string/library" />
+
+            <ImageButton
+                android:id="@+id/account"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_gravity="center_vertical|end"
+                android:layout_marginEnd="60dp"
+                android:background="@drawable/bg_circle_fill"
+                android:contentDescription="Cuenta y copia de seguridad"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_person"
+                app:tint="@color/accent" />
 
             <ImageButton
                 android:id="@+id/add"

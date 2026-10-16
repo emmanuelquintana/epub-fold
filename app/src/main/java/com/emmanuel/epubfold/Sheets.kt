@@ -31,6 +31,11 @@ class SheetRow(
 )
 
 class RowAdapter : RecyclerView.Adapter<RowAdapter.Holder>() {
+    /** Colores opcionales (p. ej. para el panel lateral con los colores del tema de lectura). */
+    var textColor: Int? = null
+    var secondaryColor: Int? = null
+    var accentColor: Int? = null
+
     var rows: List<SheetRow> = emptyList()
         set(value) {
             field = value
@@ -53,7 +58,11 @@ class RowAdapter : RecyclerView.Adapter<RowAdapter.Holder>() {
         val r = rows[position]
         val ctx = h.itemView.context
         h.title.text = r.title
-        h.title.setTextColor(ctx.color(if (r.highlighted) R.color.accent else R.color.label))
+        h.title.setTextColor(
+            if (r.highlighted) accentColor ?: ctx.color(R.color.accent) else textColor ?: ctx.color(R.color.label)
+        )
+        h.caption.setTextColor(secondaryColor ?: ctx.color(R.color.label_secondary))
+        h.trailing.setTextColor(secondaryColor ?: ctx.color(R.color.label_secondary))
         h.title.typeface = Typeface.create(if (r.highlighted) "sans-serif-medium" else "sans-serif", Typeface.NORMAL)
         h.caption.visibility = if (r.caption.isNullOrEmpty()) View.GONE else View.VISIBLE
         h.caption.text = r.caption
@@ -103,10 +112,52 @@ class SettingsSheet(
     private val onAnimation: () -> Unit,
     private val onBrightness: () -> Unit,
     private val onKeepScreenOn: () -> Unit,
+    private val onAutoTheme: () -> Unit,
 ) {
     private val ctx = activity
     private val accent = ctx.color(R.color.accent)
     private val themeTiles = ArrayList<Pair<ReaderTheme, View>>()
+    private val fontTiles = ArrayList<Pair<ReaderFont, View>>()
+
+    private fun fontTile(f: ReaderFont): View {
+        val tile = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(ctx.dpi(14), ctx.dpi(10), ctx.dpi(14), ctx.dpi(10))
+            setOnClickListener {
+                performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                prefs.font = f
+                refreshFonts()
+                onRelayout()
+            }
+        }
+        val tf = f.typeface(ctx)
+        tile.addView(TextView(ctx).apply {
+            text = "Aa"
+            typeface = tf
+            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+            setTextColor(ctx.color(R.color.label))
+        })
+        tile.addView(TextView(ctx).apply {
+            text = f.label
+            gravity = Gravity.CENTER
+            setTextAppearance(R.style.Text_Footnote)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        })
+        fontTiles += f to tile
+        return tile.also {
+            it.layoutParams = LinearLayout.LayoutParams(ctx.dpi(96), ctx.dpi(78)).apply { marginEnd = ctx.dpi(8) }
+        }
+    }
+
+    private fun refreshFonts() {
+        fontTiles.forEach { (f, v) ->
+            val sel = f == prefs.font
+            v.background = roundRect(ctx.color(R.color.group_bg), ctx.dp(12f),
+                if (sel) accent else ctx.color(R.color.separator), if (sel) ctx.dpi(3) else 1)
+        }
+    }
 
     fun show() {
         val dialog = BottomSheetDialog(ctx)
@@ -197,14 +248,71 @@ class SettingsSheet(
         }
         refreshTiles()
 
+        // --- Textura y tema automático
+        spacer(col, 8)
+        val look = group(col)
+        look.addView(switchRow("Textura de papel", prefs.texture) {
+            prefs.texture = it
+            onTheme(prefs.theme)
+            refreshTiles()
+        })
+        look.addView(hairline(ctx, ctx.dpi(16)))
+        val schedule = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        fun timeRow(label: String, get: () -> Int, set: (Int) -> Unit): View {
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = ctx.dpi(48)
+                setPadding(ctx.dpi(16), 0, ctx.dpi(16), 0)
+            }
+            row.addView(TextView(ctx).apply { text = label; setTextAppearance(R.style.Text_Body) },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val value = TextView(ctx).apply {
+                text = minutesLabel(get())
+                setTextColor(accent)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+                background = roundRect(ctx.color(R.color.fill), ctx.dp(8f))
+                setPadding(ctx.dpi(10), ctx.dpi(4), ctx.dpi(10), ctx.dpi(4))
+            }
+            row.addView(value)
+            row.setOnClickListener {
+                android.app.TimePickerDialog(ctx, { _, h, m ->
+                    set(h * 60 + m)
+                    value.text = minutesLabel(h * 60 + m)
+                    onAutoTheme()
+                }, get() / 60, get() % 60, true).show()
+            }
+            return row
+        }
+        schedule.addView(hairline(ctx, ctx.dpi(16)))
+        schedule.addView(timeRow("Oscuro desde", { prefs.nightStartMin }) { prefs.nightStartMin = it })
+        schedule.addView(hairline(ctx, ctx.dpi(16)))
+        schedule.addView(timeRow("Claro desde", { prefs.nightEndMin }) { prefs.nightEndMin = it })
+        schedule.visibility = if (prefs.autoTheme == AutoTheme.SCHEDULE) View.VISIBLE else View.GONE
+        look.addView(segmentRow("Tema automático (usa tu último tema claro y oscuro)",
+            AutoTheme.entries.map { it.label }, prefs.autoTheme.ordinal) {
+            prefs.autoTheme = AutoTheme.entries[it]
+            schedule.visibility = if (prefs.autoTheme == AutoTheme.SCHEDULE) View.VISIBLE else View.GONE
+            onAutoTheme()
+            refreshTiles()
+        })
+        look.addView(schedule)
+
+        // --- Tipografías
+        spacer(col, 22)
+        col.addView(caption("Tipografía"))
+        val fontsScroll = android.widget.HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled = false }
+        val fontsRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        fontTiles.clear()
+        ReaderFont.entries.forEach { f -> fontsRow.addView(fontTile(f)) }
+        fontsScroll.addView(fontsRow)
+        col.addView(fontsScroll)
+        refreshFonts()
+
         // --- Personalizar
         spacer(col, 18)
         col.addView(caption("Personalizar"))
         val custom = group(col)
-        custom.addView(segmentRow("Tipografía", listOf("Serif", "Sans"), if (prefs.serif) 0 else 1) {
-            prefs.serif = it == 0; onRelayout()
-        })
-        custom.addView(hairline(ctx, ctx.dpi(16)))
         val spacings = listOf(1.12f, 1.3f, 1.55f)
         custom.addView(segmentRow("Interlineado", listOf("Compacto", "Normal", "Amplio"),
             spacings.indexOfFirst { kotlin.math.abs(it - prefs.lineSpacing) < 0.05f }.coerceAtLeast(1)) {
@@ -335,12 +443,19 @@ class SettingsSheet(
             gravity = Gravity.CENTER
             typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-            setTextColor(t.text)
+            setTextColor(prefs.colorsFor(t).text)
             tag = t
             setOnClickListener {
                 performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-                onTheme(t)
-                refreshTiles()
+                if (t == ReaderTheme.PERSONAL) {
+                    showCustomThemeEditor(activity, prefs) {
+                        onTheme(t)
+                        refreshTiles()
+                    }
+                } else {
+                    onTheme(t)
+                    refreshTiles()
+                }
             }
         }
         box.addView(swatch, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ctx.dpi(62)))
@@ -360,8 +475,10 @@ class SettingsSheet(
         val current = prefs.theme
         themeTiles.forEach { (t, v) ->
             val sel = t == current
+            val c = prefs.colorsFor(t)
+            (v as? TextView)?.setTextColor(c.text)
             v.background = roundRect(
-                t.paper, ctx.dp(14f),
+                c.paper, ctx.dp(14f),
                 if (sel) accent else ctx.color(R.color.separator),
                 if (sel) ctx.dpi(3) else ctx.dpi(1)
             )

@@ -49,7 +49,7 @@ class LibraryActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         prefs = ReaderPrefs(this)
         AppCompatDelegate.setDefaultNightMode(
-            if (prefs.theme.isDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
+            if (prefs.isDarkTheme(prefs.effectiveTheme())) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
         )
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -103,6 +103,8 @@ class LibraryActivity : AppCompatActivity() {
         })
 
         findViewById<View>(R.id.add).setOnClickListener { pickBook() }
+        findViewById<View>(R.id.stats).setOnClickListener { startActivity(Intent(this, StatsActivity::class.java)) }
+        findViewById<View>(R.id.account).setOnClickListener { startActivity(Intent(this, AccountActivity::class.java)) }
         handleIntent(intent)
     }
 
@@ -119,8 +121,26 @@ class LibraryActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Tema automático: la biblioteca sigue el modo claro/oscuro del tema de lectura
+        val wantDark = prefs.isDarkTheme(prefs.effectiveTheme())
+        AppCompatDelegate.setDefaultNightMode(
+            if (wantDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
+        )
         refresh()
+        autoSync()
     }
+
+    /** Sincroniza en segundo plano como mucho cada 10 minutos si hay sesión. */
+    private fun autoSync() {
+        if (CloudSync.user(this) == null) return
+        if (System.currentTimeMillis() - prefs.lastSync < 10 * 60_000L) return
+        lifecycleScope.launch {
+            val r = runCatching { withContext(Dispatchers.IO) { CloudSync.syncAll(this@LibraryActivity) } }
+            if (r.getOrNull()?.pulled ?: 0 > 0) refresh()
+        }
+    }
+
+    private var query = ""
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
@@ -140,6 +160,8 @@ class LibraryActivity : AppCompatActivity() {
         }
     }
 
+    private val filters = listOf("Todos", "Leyendo", "Quiero leer", "Terminados")
+
     private fun refresh() {
         val all = library.all()
         val sorted = when (prefs.librarySort) {
@@ -147,8 +169,19 @@ class LibraryActivity : AppCompatActivity() {
             LibrarySort.TITLE -> all.sortedBy { it.title.lowercase() }
             LibrarySort.AUTHOR -> all.sortedBy { it.author.lowercase() }
         }
-        val hero = all.firstOrNull { it.progress > 0f && it.progress < 0.999f }
-        adapter.submit(sorted, hero)
+        val q = query.trim().lowercase()
+        val filtered = sorted.filter { b ->
+            val shelfOk = when (prefs.libraryFilter) {
+                1 -> b.collection == Shelf.READING
+                2 -> b.collection == Shelf.WANT
+                3 -> b.collection == Shelf.FINISHED
+                else -> true
+            }
+            shelfOk && (q.isEmpty() || b.title.lowercase().contains(q) || b.author.lowercase().contains(q))
+        }
+        val hero = if (q.isEmpty() && prefs.libraryFilter == 0)
+            all.firstOrNull { it.collection == Shelf.READING } else null
+        adapter.submit(filtered, hero, all.size)
     }
 
     private fun importBook(uri: Uri, open: Boolean) {
@@ -158,6 +191,7 @@ class LibraryActivity : AppCompatActivity() {
             progress.visibility = View.GONE
             result.onSuccess {
                 refresh()
+                CloudSync.pullOne(this@LibraryActivity, it.id) { refresh() }
                 if (open) openBook(it)
             }.onFailure {
                 Toast.makeText(this@LibraryActivity, "No se pudo abrir el libro: ${it.message}", Toast.LENGTH_LONG).show()
@@ -173,14 +207,28 @@ class LibraryActivity : AppCompatActivity() {
         anchor.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
         PopupMenu(this, anchor).apply {
             menu.add(0, 1, 0, "Leer")
-            menu.add(0, 2, 1, "Marcar como no leído")
-            menu.add(0, 3, 2, "Quitar de la biblioteca")
+            if (entry.shelf == "want") menu.add(0, 4, 1, "Quitar de «Quiero leer»")
+            else if (entry.collection != Shelf.FINISHED) menu.add(0, 5, 1, "Añadir a «Quiero leer»")
+            if (entry.collection != Shelf.FINISHED) menu.add(0, 6, 2, "Marcar como terminado")
+            menu.add(0, 2, 3, "Marcar como no leído")
+            menu.add(0, 3, 4, "Quitar de la biblioteca")
             setOnMenuItemClickListener {
                 when (it.itemId) {
                     1 -> openBook(entry)
                     2 -> { library.resetProgress(entry.id); refresh() }
-                    3 -> { library.delete(entry.id); refresh() }
+                    3 -> {
+                        androidx.appcompat.app.AlertDialog.Builder(this@LibraryActivity)
+                            .setTitle("¿Quitar «${entry.title}»?")
+                            .setMessage("Se borrarán el libro, sus marcadores y notas de este dispositivo.")
+                            .setNegativeButton("Cancelar", null)
+                            .setPositiveButton("Quitar") { _, _ -> library.delete(entry.id); refresh() }
+                            .show()
+                    }
+                    4 -> { library.setShelf(entry.id, ""); refresh() }
+                    5 -> { library.setShelf(entry.id, "want"); refresh() }
+                    6 -> { library.markFinished(entry.id); refresh() }
                 }
+                CloudSync.schedulePush(this@LibraryActivity, entry.id)
                 true
             }
             show()
@@ -211,13 +259,35 @@ class LibraryActivity : AppCompatActivity() {
 
     private inner class LibraryAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private var items: List<BookEntry> = emptyList()
-        private var hero: BookEntry? = null
+        var hero: BookEntry? = null
+        var total = 0
+        private var first = true
 
-        fun submit(list: List<BookEntry>, heroBook: BookEntry?) {
+        fun submit(list: List<BookEntry>, heroBook: BookEntry?, totalBooks: Int) {
+            val old = items.size
             items = list
             hero = heroBook
-            @Suppress("NotifyDataSetChanged")
-            notifyDataSetChanged()
+            total = totalBooks
+            if (first) {
+                first = false
+                @Suppress("NotifyDataSetChanged")
+                notifyDataSetChanged()
+                return
+            }
+            // La cabecera se actualiza con payload para no perder el foco del buscador
+            notifyItemChanged(0, "header")
+            val n = list.size
+            if (n > old) {
+                notifyItemRangeChanged(1, old)
+                notifyItemRangeInserted(1 + old, n - old)
+            } else {
+                notifyItemRangeChanged(1, n)
+                if (old > n) notifyItemRangeRemoved(1 + n, old - n)
+            }
+        }
+
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int, payloads: MutableList<Any>) {
+            if (holder is HeaderHolder) holder.bind(items, hero) else super.onBindViewHolder(holder, position, payloads)
         }
 
         override fun getItemCount() = items.size + 1
@@ -251,8 +321,30 @@ class LibraryActivity : AppCompatActivity() {
         val section: View = v.findViewById(R.id.section)
         val sortBox: FrameLayout = v.findViewById(R.id.sortBox)
         val sort = SegmentedControl(v.context)
+        val search: android.widget.EditText = v.findViewById(R.id.search)
+        val filterBox: FrameLayout = v.findViewById(R.id.filterBox)
+        val filter = SegmentedControl(v.context)
+        val sectionTitle: TextView = v.findViewById(R.id.sectionTitle)
 
         init {
+            filterBox.addView(filter)
+            filter.setOptions(filters, prefs.libraryFilter)
+            filter.onSelected = { i ->
+                prefs.libraryFilter = i
+                refresh()
+            }
+            search.setText(query)
+            search.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    val q = s?.toString() ?: ""
+                    if (q != query) {
+                        query = q
+                        refresh()
+                    }
+                }
+            })
             sortBox.addView(sort)
             sort.setOptions(LibrarySort.entries.map { it.label }, prefs.librarySort.ordinal)
             sort.onSelected = { i ->
@@ -263,14 +355,24 @@ class LibraryActivity : AppCompatActivity() {
         }
 
         fun bind(books: List<BookEntry>, hero: BookEntry?) {
-            count.text = when (books.size) {
+            val total = adapter.total
+            count.text = when (total) {
                 0 -> ""
                 1 -> "1 libro"
-                else -> "${books.size} libros"
+                else -> "$total libros"
             }
-            count.visibility = if (books.isEmpty()) View.GONE else View.VISIBLE
-            empty.visibility = if (books.isEmpty()) View.VISIBLE else View.GONE
-            section.visibility = if (books.isEmpty()) View.GONE else View.VISIBLE
+            val libEmpty = total == 0
+            count.visibility = if (libEmpty) View.GONE else View.VISIBLE
+            empty.visibility = if (libEmpty) View.VISIBLE else View.GONE
+            search.visibility = if (libEmpty) View.GONE else View.VISIBLE
+            filterBox.visibility = if (libEmpty) View.GONE else View.VISIBLE
+            section.visibility = if (libEmpty) View.GONE else View.VISIBLE
+            sectionTitle.text = when {
+                query.isNotBlank() -> if (books.isEmpty()) "Sin resultados" else "Resultados (${books.size})"
+                prefs.libraryFilter == 0 -> "Todos los libros"
+                books.isEmpty() -> "${filters[prefs.libraryFilter]}: ninguno"
+                else -> "${filters[prefs.libraryFilter]} (${books.size})"
+            }
             if (hero == null) {
                 heroBox.visibility = View.GONE
             } else {

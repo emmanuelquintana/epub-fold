@@ -20,6 +20,32 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp" />
 
+    <!-- Buscar y colecciones -->
+    <EditText
+        android:id="@+id/search"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:background="@drawable/bg_search_field"
+        android:drawableStart="@drawable/ic_search"
+        android:drawablePadding="8dp"
+        android:drawableTint="@color/label_secondary"
+        android:hint="Buscar por título o autor"
+        android:imeOptions="actionSearch"
+        android:importantForAutofill="no"
+        android:inputType="text"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="9dp"
+        android:textColor="@color/label"
+        android:textColorHint="@color/label_secondary"
+        android:textSize="17sp" />
+
+    <FrameLayout
+        android:id="@+id/filterBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp" />
+
     <!-- Seguir leyendo -->
     <LinearLayout
         android:id="@+id/hero"
@@ -205,6 +231,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:id="@+id/sectionTitle"
             android:text="Todos los libros" />
 
         <FrameLayout

@@ -19,7 +19,37 @@ data class BookEntry(
     val lastOpened: Long,
     val chapter: Int,
     val charOffset: Int,
-)
+    /** "" normal, "want" = Quiero leer. */
+    val shelf: String = "",
+    /** Momento en que se terminó (0 = no terminado). */
+    val finishedAt: Long = 0L,
+    /** Última vez que cambió la posición (para sincronizar). */
+    val updatedAt: Long = 0L,
+) {
+    /** Identificador estable entre dispositivos (mismo libro = mismo título y autor). */
+    val key: String get() = bookKey(title, author)
+
+    val collection: Shelf
+        get() = when {
+            finishedAt > 0L || progress >= 0.999f -> Shelf.FINISHED
+            shelf == "want" -> Shelf.WANT
+            progress > 0f -> Shelf.READING
+            else -> Shelf.NEW
+        }
+}
+
+enum class Shelf(val label: String) {
+    READING("Leyendo"),
+    WANT("Quiero leer"),
+    FINISHED("Terminados"),
+    NEW("Sin empezar");
+}
+
+fun bookKey(title: String, author: String): String {
+    val md = java.security.MessageDigest.getInstance("SHA-1")
+    val bytes = md.digest("${title.trim().lowercase()}|${author.trim().lowercase()}".toByteArray())
+    return bytes.joinToString("") { "%02x".format(it) }.take(24)
+}
 
 /** Biblioteca local: los EPUB se copian a almacenamiento privado y se indexan en JSON. */
 class Library(private val context: Context) {
@@ -32,16 +62,27 @@ class Library(private val context: Context) {
 
     fun get(id: String): BookEntry? = load().firstOrNull { it.id == id }
 
+    fun findByKey(key: String): BookEntry? = load().firstOrNull { it.key == key }
+
     /** Copia el EPUB del [uri] y lo añade. Se ejecuta en segundo plano. */
     fun import(uri: Uri): BookEntry {
+        val input = context.contentResolver.openInputStream(uri)
+            ?: throw IllegalArgumentException("No se pudo leer el archivo")
+        return input.use { importStream(it) }
+    }
+
+    /** Añade un EPUB desde un flujo. Si el libro ya existe, devuelve el existente. */
+    fun importStream(input: java.io.InputStream): BookEntry {
         val id = UUID.randomUUID().toString()
         val dest = File(booksDir, "$id.epub")
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            dest.outputStream().use { input.copyTo(it) }
-        } ?: throw IllegalArgumentException("No se pudo leer el archivo")
+        dest.outputStream().use { input.copyTo(it) }
 
         return try {
             EpubBook(dest).use { book ->
+                findByKey(bookKey(book.title, book.author))?.let { existing ->
+                    dest.delete()
+                    return existing
+                }
                 var cover: String? = null
                 book.coverPath?.let { cp ->
                     book.readBytes(cp)?.let { bytes ->
@@ -69,19 +110,36 @@ class Library(private val context: Context) {
     }
 
     fun updatePosition(id: String, chapter: Int, charOffset: Int, progress: Float) {
-        save(load().map {
-            if (it.id == id) it.copy(chapter = chapter, charOffset = charOffset, progress = progress,
-                lastOpened = System.currentTimeMillis()) else it
-        })
+        val now = System.currentTimeMillis()
+        update(id) {
+            it.copy(
+                chapter = chapter, charOffset = charOffset, progress = progress,
+                lastOpened = now, updatedAt = now,
+                finishedAt = if (progress >= 0.999f && it.finishedAt == 0L) now else it.finishedAt,
+            )
+        }
+    }
+
+    fun update(id: String, f: (BookEntry) -> BookEntry) {
+        save(load().map { if (it.id == id) f(it) else it })
+    }
+
+    fun setShelf(id: String, shelf: String) = update(id) { it.copy(shelf = shelf, updatedAt = System.currentTimeMillis()) }
+
+    fun markFinished(id: String) = update(id) {
+        val now = System.currentTimeMillis()
+        it.copy(finishedAt = now, shelf = "", updatedAt = now)
     }
 
     fun resetProgress(id: String) {
-        save(load().map { if (it.id == id) it.copy(chapter = 0, charOffset = 0, progress = 0f) else it })
-        Bookmarks(context, id).clear()
+        update(id) {
+            it.copy(chapter = 0, charOffset = 0, progress = 0f, finishedAt = 0L, updatedAt = System.currentTimeMillis())
+        }
+        Annotations(context, id).clear()
     }
 
     fun delete(id: String) {
-        Bookmarks(context, id).clear()
+        Annotations(context, id).clear()
         val list = load()
         list.firstOrNull { it.id == id }?.let { e ->
             File(e.path).delete()
@@ -101,7 +159,8 @@ class Library(private val context: Context) {
                     o.getString("id"), o.optString("title"), o.optString("author"),
                     o.getString("path"), o.optString("cover").ifEmpty { null },
                     o.optDouble("progress", 0.0).toFloat(), o.optLong("lastOpened"),
-                    o.optInt("chapter"), o.optInt("charOffset")
+                    o.optInt("chapter"), o.optInt("charOffset"),
+                    o.optString("shelf"), o.optLong("finishedAt"), o.optLong("updatedAt"),
                 )
             }
         } catch (e: Exception) {
@@ -118,6 +177,7 @@ class Library(private val context: Context) {
                 put("path", it.path); put("cover", it.coverPath ?: "")
                 put("progress", it.progress.toDouble()); put("lastOpened", it.lastOpened)
                 put("chapter", it.chapter); put("charOffset", it.charOffset)
+                put("shelf", it.shelf); put("finishedAt", it.finishedAt); put("updatedAt", it.updatedAt)
             })
         }
         val tmp = File(indexFile.parentFile, "library.json.tmp")
@@ -141,7 +201,7 @@ class ReaderPrefs(context: Context) {
         get() = enumPref("themeName", ReaderTheme.ORIGINAL)
         set(v) {
             sp.edit().putString("themeName", v.name).apply()
-            if (v.isDark) lastDark = v else lastLight = v
+            if (isDarkTheme(v)) lastDark = v else lastLight = v
         }
 
     var lastLight: ReaderTheme
@@ -156,9 +216,87 @@ class ReaderPrefs(context: Context) {
         get() = sp.getFloat("fontSize", 19f)
         set(v) = sp.edit().putFloat("fontSize", v).apply()
 
-    var serif: Boolean
-        get() = sp.getBoolean("serif", true)
-        set(v) = sp.edit().putBoolean("serif", v).apply()
+    var font: ReaderFont
+        get() = enumPref("font", ReaderFont.SERIF)
+        set(v) = sp.edit().putString("font", v.name).apply()
+
+    var customPaper: Int
+        get() = sp.getInt("customPaper", 0xFFFDF6E3.toInt())
+        set(v) = sp.edit().putInt("customPaper", v).apply()
+
+    var customText: Int
+        get() = sp.getInt("customText", 0xFF073642.toInt())
+        set(v) = sp.edit().putInt("customText", v).apply()
+
+    /** Textura de papel en todos los temas. */
+    var texture: Boolean
+        get() = sp.getBoolean("texture", false)
+        set(v) = sp.edit().putBoolean("texture", v).apply()
+
+    var autoTheme: AutoTheme
+        get() = enumPref("autoTheme", AutoTheme.OFF)
+        set(v) = sp.edit().putString("autoTheme", v.name).apply()
+
+    /** Inicio y fin de la noche en minutos desde medianoche (tema automático por horario). */
+    var nightStartMin: Int
+        get() = sp.getInt("nightStart", 21 * 60)
+        set(v) = sp.edit().putInt("nightStart", v).apply()
+
+    var nightEndMin: Int
+        get() = sp.getInt("nightEnd", 7 * 60)
+        set(v) = sp.edit().putInt("nightEnd", v).apply()
+
+    var ttsRate: Float
+        get() = sp.getFloat("ttsRate", 1f)
+        set(v) = sp.edit().putFloat("ttsRate", v).apply()
+
+    var sidePanel: Boolean
+        get() = sp.getBoolean("sidePanel", false)
+        set(v) = sp.edit().putBoolean("sidePanel", v).apply()
+
+    var translateTarget: String
+        get() = sp.getString("translateTarget", null) ?: java.util.Locale.getDefault().language
+        set(v) = sp.edit().putString("translateTarget", v).apply()
+
+    var dailyGoalMin: Int
+        get() = sp.getInt("dailyGoal", 20)
+        set(v) = sp.edit().putInt("dailyGoal", v).apply()
+
+    var yearlyGoalBooks: Int
+        get() = sp.getInt("yearlyGoal", 12)
+        set(v) = sp.edit().putInt("yearlyGoal", v).apply()
+
+    var libraryFilter: Int
+        get() = sp.getInt("libraryFilter", 0)
+        set(v) = sp.edit().putInt("libraryFilter", v).apply()
+
+    var lastSync: Long
+        get() = sp.getLong("lastSync", 0L)
+        set(v) = sp.edit().putLong("lastSync", v).apply()
+
+    /** Exporta los ajustes (para la copia de seguridad). */
+    fun toJson(): JSONObject = JSONObject().apply {
+        sp.all.forEach { (k, v) ->
+            when (v) {
+                is Boolean, is Int, is Long, is Float, is String -> put(k, JSONObject().put("t", v.javaClass.simpleName).put("v", v))
+            }
+        }
+    }
+
+    fun fromJson(o: JSONObject) {
+        val e = sp.edit()
+        o.keys().forEach { k ->
+            val w = o.optJSONObject(k) ?: return@forEach
+            when (w.optString("t")) {
+                "Boolean" -> e.putBoolean(k, w.optBoolean("v"))
+                "Integer" -> e.putInt(k, w.optInt("v"))
+                "Long" -> e.putLong(k, w.optLong("v"))
+                "Float" -> e.putFloat(k, w.optDouble("v").toFloat())
+                "String" -> e.putString(k, w.optString("v"))
+            }
+        }
+        e.apply()
+    }
 
     var lineSpacing: Float
         get() = sp.getFloat("lineSpacing", 1.3f)

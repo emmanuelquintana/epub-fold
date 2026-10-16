@@ -3,6 +3,12 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Firebase (cuentas y sincronización) sólo se activa si existe google-services.json
+val hasFirebaseConfig = file("google-services.json").exists()
+if (hasFirebaseConfig) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 val ciVersionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
 val keystorePath: String? = System.getenv("KEYSTORE_FILE")
 val hasReleaseKeystore = keystorePath != null && file(keystorePath).exists()
@@ -17,6 +23,11 @@ android {
         targetSdk = 35
         versionCode = ciVersionCode
         versionName = "1.0.$ciVersionCode"
+        buildConfigField("boolean", "HAS_FIREBASE", hasFirebaseConfig.toString())
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     signingConfigs {
@@ -58,4 +69,14 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.window:window:1.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
+
+    // Traductor sin conexión y detección de idioma
+    implementation("com.google.mlkit:translate:17.0.3")
+    implementation("com.google.mlkit:language-id:17.0.6")
+
+    // Cuentas y sincronización en la nube
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-firestore")
 }
