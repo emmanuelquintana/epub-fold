@@ -1,11 +1,73 @@
 <resources>
     <style name="Theme.EpubFold" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">@color/brand</item>
-        <item name="colorSecondary">@color/brand</item>
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+        <item name="colorSecondary">@color/accent</item>
+        <item name="colorSurface">@color/card</item>
+        <item name="android:colorBackground">@color/bg_grouped</item>
+        <item name="android:windowBackground">@color/bg_grouped</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="bottomSheetDialogTheme">@style/ThemeOverlay.EpubFold.Sheet</item>
     </style>
+
     <style name="Theme.EpubFold.Reader">
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:windowFullscreen">true</item>
+    </style>
+
+    <style name="ThemeOverlay.EpubFold.Sheet" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/Widget.EpubFold.Sheet</item>
+    </style>
+
+    <style name="Widget.EpubFold.Sheet" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="backgroundTint">@color/sheet_bg</item>
+        <item name="shapeAppearance">@style/Shape.EpubFold.Sheet</item>
+    </style>
+
+    <style name="Shape.EpubFold.Sheet" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSizeTopLeft">22dp</item>
+        <item name="cornerSizeTopRight">22dp</item>
+        <item name="cornerSizeBottomLeft">0dp</item>
+        <item name="cornerSizeBottomRight">0dp</item>
+    </style>
+
+    <!-- Tipografía con jerarquía tipo iOS -->
+    <style name="Text.LargeTitle" parent="">
+        <item name="android:textSize">34sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">-0.01</item>
+        <item name="android:textColor">@color/label</item>
+    </style>
+    <style name="Text.Title2" parent="">
+        <item name="android:textSize">22sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/label</item>
+    </style>
+    <style name="Text.Headline" parent="">
+        <item name="android:textSize">17sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textColor">@color/label</item>
+    </style>
+    <style name="Text.Body" parent="">
+        <item name="android:textSize">17sp</item>
+        <item name="android:textColor">@color/label</item>
+    </style>
+    <style name="Text.Subhead" parent="">
+        <item name="android:textSize">15sp</item>
+        <item name="android:textColor">@color/label_secondary</item>
+    </style>
+    <style name="Text.Footnote" parent="">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/label_secondary</item>
+    </style>
+    <style name="Text.Caption" parent="">
+        <item name="android:textSize">12sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:letterSpacing">0.06</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:textColor">@color/label_secondary</item>
     </style>
 </resources>

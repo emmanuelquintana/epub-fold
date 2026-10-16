@@ -93,6 +93,7 @@ class Paginator(
     val contentHeight: Int,
     private val lineSpacing: Float,
     private val density: Float,
+    private val justify: Boolean = true,
 ) {
     val layouts = arrayOfNulls<StaticLayout>(book.spine.size)
     val pages = ArrayList<Page>()
@@ -113,7 +114,7 @@ class Paginator(
                 .setIncludePad(false)
                 .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
                 .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NORMAL)
-                .setJustificationMode(Layout.JUSTIFICATION_MODE_INTER_WORD)
+                .setJustificationMode(if (justify) Layout.JUSTIFICATION_MODE_INTER_WORD else Layout.JUSTIFICATION_MODE_NONE)
                 .build()
             layouts[ch] = layout
             var start = 0
@@ -143,6 +144,25 @@ class Paginator(
         }
         return result
     }
+
+    /** Rango de caracteres [inicio, fin) que ocupa la página dentro de su capítulo. */
+    fun charRange(page: Int): IntRange {
+        val p = pages.getOrNull(page) ?: return IntRange.EMPTY
+        val next = pages.getOrNull(page + 1)
+        val end = if (next != null && next.chapter == p.chapter) next.startChar
+        else layouts[p.chapter]?.text?.length ?: Int.MAX_VALUE
+        return p.startChar until end
+    }
+
+    /** Páginas que faltan para terminar el capítulo de [page] (sin contarla). */
+    fun pagesLeftInChapter(page: Int): Int {
+        val p = pages.getOrNull(page) ?: return 0
+        var i = page + 1
+        while (i < pages.size && pages[i].chapter == p.chapter) i++
+        return i - page - 1
+    }
+
+    fun textOf(chapter: Int): CharSequence = layouts.getOrNull(chapter)?.text ?: ""
 
     fun positionOf(page: Int): ReadingPosition {
         val p = pages.getOrNull(page) ?: return ReadingPosition(0, 0)

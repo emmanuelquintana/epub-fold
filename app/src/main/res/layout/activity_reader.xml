@@ -15,85 +15,163 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center" />
 
+    <!-- Barra superior -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
-        android:elevation="4dp"
         android:gravity="center_vertical"
         android:minHeight="56dp"
         android:orientation="horizontal"
-        android:paddingHorizontal="4dp"
+        android:paddingHorizontal="10dp"
         android:visibility="gone">
 
         <ImageButton
             android:id="@+id/btnBack"
-            style="?attr/borderlessButtonStyle"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
             android:contentDescription="@string/back"
+            android:padding="7dp"
+            android:scaleType="fitCenter"
             android:src="@drawable/ic_back" />
 
-        <TextView
-            android:id="@+id/bookTitle"
+        <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:ellipsize="end"
-            android:fontFamily="serif"
-            android:maxLines="1"
-            android:paddingHorizontal="8dp"
-            android:textSize="18sp" />
+            android:gravity="center"
+            android:orientation="vertical"
+            android:paddingHorizontal="8dp">
+
+            <TextView
+                android:id="@+id/bookTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="sans-serif-medium"
+                android:maxLines="1"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/chapterTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textSize="12sp" />
+        </LinearLayout>
 
         <ImageButton
-            android:id="@+id/btnToc"
-            style="?attr/borderlessButtonStyle"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:contentDescription="@string/contents"
-            android:src="@drawable/ic_toc" />
+            android:id="@+id/btnBookmark"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_marginEnd="8dp"
+            android:contentDescription="Marcador"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_bookmark_border" />
 
         <ImageButton
-            android:id="@+id/btnTheme"
-            style="?attr/borderlessButtonStyle"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:id="@+id/btnNight"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
             android:contentDescription="@string/theme"
-            android:src="@drawable/ic_theme" />
-
-        <ImageButton
-            android:id="@+id/btnText"
-            style="?attr/borderlessButtonStyle"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:contentDescription="@string/text_settings"
-            android:src="@drawable/ic_text" />
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_moon" />
     </LinearLayout>
 
+    <!-- Panel flotante inferior -->
     <LinearLayout
         android:id="@+id/bottomBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:elevation="4dp"
+        android:layout_gravity="bottom|center_horizontal"
         android:orientation="vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="10dp"
         android:visibility="gone">
 
-        <TextView
-            android:id="@+id/pageInfo"
+        <LinearLayout
+            android:id="@+id/bottomCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:gravity="center"
-            android:maxLines="1"
-            android:textSize="13sp" />
+            android:layout_margin="12dp"
+            android:elevation="10dp"
+            android:orientation="vertical"
+            android:paddingHorizontal="12dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="12dp">
 
-        <SeekBar
-            android:id="@+id/seek"
-            android:layout_width="match_parent"
-            android:layout_height="40dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/toolToc"
+                    style="@style/ReaderTool">
+                    <ImageView
+                        android:id="@+id/iconToc"
+                        style="@style/ReaderToolIcon"
+                        android:src="@drawable/ic_toc" />
+                    <TextView
+                        android:id="@+id/labelToc"
+                        style="@style/ReaderToolLabel"
+                        android:text="Contenido" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/toolSearch"
+                    style="@style/ReaderTool">
+                    <ImageView
+                        android:id="@+id/iconSearch"
+                        style="@style/ReaderToolIcon"
+                        android:src="@drawable/ic_search" />
+                    <TextView
+                        android:id="@+id/labelSearch"
+                        style="@style/ReaderToolLabel"
+                        android:text="Buscar" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/toolThemes"
+                    style="@style/ReaderTool">
+                    <ImageView
+                        android:id="@+id/iconThemes"
+                        style="@style/ReaderToolIcon"
+                        android:src="@drawable/ic_text" />
+                    <TextView
+                        android:id="@+id/labelThemes"
+                        style="@style/ReaderToolLabel"
+                        android:text="Temas y ajustes" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/seek"
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:layout_marginTop="6dp" />
+
+            <TextView
+                android:id="@+id/pageInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:maxLines="1"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/timeInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:maxLines="1"
+                android:textSize="12sp" />
+        </LinearLayout>
     </LinearLayout>
 </FrameLayout>

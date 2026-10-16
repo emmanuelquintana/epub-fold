@@ -75,7 +75,13 @@ class Library(private val context: Context) {
         })
     }
 
+    fun resetProgress(id: String) {
+        save(load().map { if (it.id == id) it.copy(chapter = 0, charOffset = 0, progress = 0f) else it })
+        Bookmarks(context, id).clear()
+    }
+
     fun delete(id: String) {
+        Bookmarks(context, id).clear()
         val list = load()
         list.firstOrNull { it.id == id }?.let { e ->
             File(e.path).delete()
@@ -126,9 +132,25 @@ enum class LayoutMode(val label: String) { AUTO("Automático"), SINGLE("Una pág
 class ReaderPrefs(context: Context) {
     private val sp = context.getSharedPreferences("reader", Context.MODE_PRIVATE)
 
+    private inline fun <reified E : Enum<E>> enumPref(key: String, def: E): E {
+        val name = sp.getString(key, null) ?: return def
+        return enumValues<E>().firstOrNull { it.name == name } ?: def
+    }
+
     var theme: ReaderTheme
-        get() = ReaderTheme.entries.getOrElse(sp.getInt("theme", 0)) { ReaderTheme.LIGHT }
-        set(v) = sp.edit().putInt("theme", v.ordinal).apply()
+        get() = enumPref("themeName", ReaderTheme.ORIGINAL)
+        set(v) {
+            sp.edit().putString("themeName", v.name).apply()
+            if (v.isDark) lastDark = v else lastLight = v
+        }
+
+    var lastLight: ReaderTheme
+        get() = enumPref("lastLight", ReaderTheme.ORIGINAL)
+        set(v) = sp.edit().putString("lastLight", v.name).apply()
+
+    var lastDark: ReaderTheme
+        get() = enumPref("lastDark", ReaderTheme.NOCHE)
+        set(v) = sp.edit().putString("lastDark", v.name).apply()
 
     var fontSizeSp: Float
         get() = sp.getFloat("fontSize", 19f)
@@ -142,11 +164,41 @@ class ReaderPrefs(context: Context) {
         get() = sp.getFloat("lineSpacing", 1.3f)
         set(v) = sp.edit().putFloat("lineSpacing", v).apply()
 
+    var marginScale: Float
+        get() = sp.getFloat("marginScale", 1f)
+        set(v) = sp.edit().putFloat("marginScale", v).apply()
+
+    var justify: Boolean
+        get() = sp.getBoolean("justify", true)
+        set(v) = sp.edit().putBoolean("justify", v).apply()
+
     var layoutMode: LayoutMode
-        get() = LayoutMode.entries.getOrElse(sp.getInt("layout", 0)) { LayoutMode.AUTO }
-        set(v) = sp.edit().putInt("layout", v.ordinal).apply()
+        get() = enumPref("layoutName", LayoutMode.AUTO)
+        set(v) = sp.edit().putString("layoutName", v.name).apply()
+
+    var animation: PageAnimation
+        get() = enumPref("animation", PageAnimation.CURL)
+        set(v) = sp.edit().putString("animation", v.name).apply()
 
     var volumeKeys: Boolean
         get() = sp.getBoolean("volumeKeys", true)
         set(v) = sp.edit().putBoolean("volumeKeys", v).apply()
+
+    var keepScreenOn: Boolean
+        get() = sp.getBoolean("keepScreenOn", true)
+        set(v) = sp.edit().putBoolean("keepScreenOn", v).apply()
+
+    /** Brillo de la ventana 0..1, o -1 para usar el del sistema. */
+    var brightness: Float
+        get() = sp.getFloat("brightness", -1f)
+        set(v) = sp.edit().putFloat("brightness", v).apply()
+
+    /** Segundos medios que tardas en leer una página (para estimar tiempo restante). */
+    var secondsPerPage: Float
+        get() = sp.getFloat("secondsPerPage", 50f)
+        set(v) = sp.edit().putFloat("secondsPerPage", v).apply()
+
+    var librarySort: LibrarySort
+        get() = enumPref("librarySort", LibrarySort.RECENT)
+        set(v) = sp.edit().putString("librarySort", v.name).apply()
 }

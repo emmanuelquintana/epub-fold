@@ -4,53 +4,56 @@
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?android:attr/colorBackground">
+    android:background="@color/bg_grouped">
 
-    <LinearLayout
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/list"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical">
+        android:clipToPadding="false"
+        android:paddingHorizontal="14dp" />
 
-        <com.google.android.material.appbar.MaterialToolbar
-            android:id="@+id/toolbar"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="?attr/actionBarSize"
-            app:title="@string/library"
-            app:titleTextAppearance="?attr/textAppearanceHeadlineSmall" />
+    <!-- Barra superior compacta: aparece al desplazar (como el título grande de iOS) -->
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
 
         <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="match_parent">
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/list"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:clipToPadding="false"
-                android:padding="12dp"
-                android:paddingBottom="96dp" />
+            android:layout_height="52dp">
 
             <TextView
-                android:id="@+id/empty"
+                android:id="@+id/smallTitle"
+                style="@style/Text.Headline"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
-                android:gravity="center"
-                android:padding="32dp"
-                android:text="@string/empty_library"
-                android:textAppearance="?attr/textAppearanceBodyLarge" />
-        </FrameLayout>
-    </LinearLayout>
+                android:alpha="0"
+                android:text="@string/library" />
 
-    <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
-        android:id="@+id/add"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
-        android:layout_margin="24dp"
-        android:text="@string/open_epub"
-        app:icon="@drawable/ic_add" />
+            <ImageButton
+                android:id="@+id/add"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_gravity="center_vertical|end"
+                android:layout_marginEnd="16dp"
+                android:background="@drawable/bg_circle_fill"
+                android:contentDescription="@string/open_epub"
+                android:padding="7dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_add"
+                app:tint="@color/accent" />
+        </FrameLayout>
+
+        <View
+            android:id="@+id/topDivider"
+            android:layout_width="match_parent"
+            android:layout_height="1px"
+            android:alpha="0"
+            android:background="@color/separator" />
+    </LinearLayout>
 
     <com.google.android.material.progressindicator.CircularProgressIndicator
         android:id="@+id/progress"
@@ -58,5 +61,6 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center"
         android:indeterminate="true"
-        android:visibility="gone" />
+        android:visibility="gone"
+        app:indicatorColor="@color/accent" />
 </FrameLayout>

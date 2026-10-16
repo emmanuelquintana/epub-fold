@@ -29,12 +29,6 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
-enum class ReaderTheme(val paper: Int, val text: Int, val secondary: Int, val isDark: Boolean, val label: String) {
-    LIGHT(0xFFFBF8F1.toInt(), 0xFF26231F.toInt(), 0xFF8C8679.toInt(), false, "Claro"),
-    SEPIA(0xFFF2E6CC.toInt(), 0xFF3D3023.toInt(), 0xFF8E7B5F.toInt(), false, "Sepia"),
-    DARK(0xFF141414.toInt(), 0xFFD5CFC3.toInt(), 0xFF6F6B64.toInt(), true, "Oscuro");
-}
-
 /** Medidas de una página (en una o dos columnas). */
 data class PageMetrics(
     val pageW: Float,
@@ -47,9 +41,9 @@ data class PageMetrics(
     val contentH: Int get() = (height - marginTop - marginBottom).toInt()
 
     companion object {
-        fun of(w: Int, h: Int, spread: Boolean, density: Float): PageMetrics {
+        fun of(w: Int, h: Int, spread: Boolean, density: Float, marginScale: Float = 1f): PageMetrics {
             val pageW = if (spread) w / 2f else w.toFloat()
-            val marginH = max(22 * density, pageW * 0.075f)
+            val marginH = max(14 * density, max(22 * density, pageW * 0.075f) * marginScale)
             return PageMetrics(pageW, h.toFloat(), marginH, 56 * density, 46 * density)
         }
     }
@@ -71,6 +65,25 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     var listener: Listener? = null
     var chapterTitle: (Int) -> String = { "" }
 
+    /** Indica si la página [index] tiene marcador (se dibuja una cinta). */
+    var isBookmarked: (Int) -> Boolean = { false }
+
+    /** Resaltado temporal de un resultado de búsqueda: capítulo, inicio, fin. */
+    var highlight: Triple<Int, Int, Int>? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var animation: PageAnimation = PageAnimation.CURL
+
+    var accentColor: Int = 0xFFFF9500.toInt()
+        set(value) {
+            field = value
+            ribbonPaint.color = value
+            invalidate()
+        }
+
     var paginator: Paginator? = null
         private set
     var metrics: PageMetrics? = null
@@ -80,7 +93,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     var currentPage = 0
         private set
 
-    var theme: ReaderTheme = ReaderTheme.LIGHT
+    var theme: ReaderTheme = ReaderTheme.ORIGINAL
         set(value) {
             field = value
             applyTheme()
@@ -103,6 +116,11 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val flapPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val creasePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF9500.toInt() }
+    private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val slideShadowPaint = Paint()
+    private val ribbonPath = Path()
+    private val highlightPath = Path()
 
     // ---- estado del giro de página ----
     private class Curl(
@@ -136,6 +154,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     private var downTime = 0L
     private var dragging = false
     private var movedFar = false
+    private var gestureConsumed = false
     private var velocity: VelocityTracker? = null
     private var animator: ValueAnimator? = null
 
@@ -195,6 +214,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         paginator?.paint?.color = theme.text
         paginator?.paint?.linkColor = theme.text
         flapPaint.color = theme.paper
+        highlightPaint.color = if (theme.isDark) 0x66FFB340 else 0x66FFD60A
         flapPaint.setShadowLayer(14 * density, 0f, 0f, if (theme.isDark) 0xAA000000.toInt() else 0x55000000)
         buildSpineShaders()
     }
@@ -237,9 +257,53 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
             } else {
                 drawPage(canvas, currentPage, 0f, 0, m)
             }
+        } else if (animation == PageAnimation.SLIDE) {
+            drawSlide(canvas, k, m)
         } else {
             drawCurl(canvas, k, m)
         }
+    }
+
+    /** Dibuja una "vista" completa: una página o la doble página que empieza en [index]. */
+    private fun drawSpread(c: Canvas, index: Int, m: PageMetrics) {
+        if (spread) {
+            drawPage(c, index, 0f, 1, m)
+            drawPage(c, index + 1, m.pageW, 2, m)
+        } else {
+            drawPage(c, index, 0f, 0, m)
+        }
+    }
+
+    /** Animación "Deslizar": la hoja actual se desliza y deja ver la siguiente, como en iOS. */
+    private fun drawSlide(c: Canvas, k: Curl, m: PageMetrics) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val p = progress(k)
+        val done = if (k.completeToFlipped) p else 1f - p
+        val forward = k.newPage > currentPage
+        val moving: Int
+        val x: Float
+        if (forward) {
+            drawSpread(c, k.newPage, m)
+            moving = currentPage
+            x = -done * w
+        } else {
+            drawSpread(c, currentPage, m)
+            moving = k.newPage
+            x = -(1f - done) * w
+        }
+        val sw = 22 * density
+        slideShadowPaint.shader = LinearGradient(
+            x + w, 0f, x + w + sw, 0f,
+            intArrayOf(if (theme.isDark) 0x88000000.toInt() else 0x40000000, Color.TRANSPARENT),
+            null, Shader.TileMode.CLAMP
+        )
+        c.drawRect(x + w, 0f, x + w + sw, h, slideShadowPaint)
+        c.save()
+        c.translate(x, 0f)
+        c.clipRect(0f, 0f, w, h)
+        drawSpread(c, moving, m)
+        c.restore()
     }
 
     private fun drawPage(c: Canvas, index: Int, left: Float, side: Int, m: PageMetrics) {
@@ -261,9 +325,33 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                 c.save()
                 c.translate(left + m.marginH, m.marginTop - top)
                 c.clipRect(0f, top, m.contentW.toFloat(), bottom)
+                val hl = highlight
+                if (hl != null && hl.first == page.chapter) {
+                    val len = layout.text.length
+                    val s0 = hl.second.coerceIn(0, len)
+                    val s1 = hl.third.coerceIn(0, len)
+                    if (s1 > s0) {
+                        highlightPath.rewind()
+                        layout.getSelectionPath(s0, s1, highlightPath)
+                        c.drawPath(highlightPath, highlightPaint)
+                    }
+                }
                 layout.draw(c)
                 c.restore()
             }
+        }
+        if (p != null && index >= 0 && index < p.pageCount && isBookmarked(index)) {
+            val rw = 18 * density
+            val rh = 34 * density
+            val rx = left + m.pageW - m.marginH * 0.55f - rw
+            ribbonPath.rewind()
+            ribbonPath.moveTo(rx, 0f)
+            ribbonPath.lineTo(rx + rw, 0f)
+            ribbonPath.lineTo(rx + rw, rh)
+            ribbonPath.lineTo(rx + rw / 2, rh - rw * 0.42f)
+            ribbonPath.lineTo(rx, rh)
+            ribbonPath.close()
+            c.drawPath(ribbonPath, ribbonPaint)
         }
         // sombra del lomo
         when (side) {
@@ -421,6 +509,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                 downX = e.x; downY = e.y; downTime = e.eventTime
                 dragging = false
                 movedFar = false
+                gestureConsumed = false
                 velocity?.recycle()
                 velocity = VelocityTracker.obtain().also { it.addMovement(e) }
             }
@@ -428,26 +517,34 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                 velocity?.addMovement(e)
                 val dx = e.x - downX
                 if (abs(dx) > touchSlop || abs(e.y - downY) > touchSlop) movedFar = true
-                if (!dragging && abs(dx) > touchSlop) {
+                if (!dragging && !gestureConsumed && abs(dx) > touchSlop) {
                     val forward = dx < 0
                     if ((forward && canForward()) || (!forward && canBackward())) {
                         val cornerY = if (downY > height / 2f) height.toFloat() else 0f
                         val k = createCurl(forward, cornerY)
-                        if (k != null) {
+                        if (k != null && animation == PageAnimation.NONE) {
+                            jumpTo(k.newPage)
+                            gestureConsumed = true
+                            movedFar = true
+                            dragging = false
+                            return true
+                        } else if (k != null) {
                             curl = k
                             dragging = true
                             parent?.requestDisallowInterceptTouchEvent(true)
                             if (k.completeToFlipped) start.set(k.cornerX, k.cornerY)
                             else start.set(k.flippedX, k.cornerY)
                             val travel = abs(k.flippedX - k.cornerX)
-                            dragFactor = max(1.2f, travel / (width * 0.8f))
+                            dragFactor = if (animation == PageAnimation.SLIDE) travel / width
+                            else max(1.2f, travel / (width * 0.8f))
                             downX = e.x
                         }
                     }
                 }
                 if (dragging) {
                     val k = curl ?: return true
-                    t.set(start.x + (e.x - downX) * dragFactor, start.y + (e.y - downY) * 0.8f)
+                    val dy = if (animation == PageAnimation.SLIDE) 0f else (e.y - downY) * 0.8f
+                    t.set(start.x + (e.x - downX) * dragFactor, start.y + dy)
                     constrain(k, t)
                     invalidate()
                 }
@@ -493,9 +590,23 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         if (forward && !canForward()) return
         if (!forward && !canBackward()) return
         val k = createCurl(forward, height.toFloat()) ?: return
+        if (animation == PageAnimation.NONE) {
+            jumpTo(k.newPage)
+            return
+        }
         curl = k
         if (k.completeToFlipped) t.set(k.cornerX, k.cornerY) else t.set(k.flippedX, k.cornerY)
-        animateTo(k, k.completeToFlipped, bump = true)
+        animateTo(k, k.completeToFlipped, bump = animation == PageAnimation.CURL)
+    }
+
+    /** Cambio de página inmediato provocado por el usuario (sin animación). */
+    private fun jumpTo(page: Int) {
+        curl = null
+        currentPage = align(page)
+        highlight = null
+        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        listener?.onPageChanged(currentPage)
+        invalidate()
     }
 
     private fun animateTo(k: Curl, toFlipped: Boolean, bump: Boolean) {
@@ -507,7 +618,11 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         val dist = abs(toX - fromX) / travel
         val lift = (if (k.cornerY > 0) -1f else 1f) * height * 0.16f
         animator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = if (bump) 620L else (180 + 420 * dist).toLong()
+            duration = when {
+                bump -> 620L
+                animation == PageAnimation.SLIDE -> (140 + 260 * dist).toLong()
+                else -> (180 + 420 * dist).toLong()
+            }
             interpolator = DecelerateInterpolator(if (bump) 1.2f else 1.6f)
             addUpdateListener {
                 val f = it.animatedValue as Float
@@ -525,6 +640,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                     curl = null
                     if (!cancelled && toFlipped == k.completeToFlipped) {
                         currentPage = align(k.newPage)
+                        highlight = null
                         performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                         listener?.onPageChanged(currentPage)
                     }

@@ -1,28 +1,30 @@
 package com.emmanuel.epubfold
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.LruCache
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.appcompat.widget.PopupMenu
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.appbar.MaterialToolbar
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import kotlinx.coroutines.Dispatchers
@@ -30,13 +32,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.max
+import kotlin.math.min
 
 class LibraryActivity : AppCompatActivity() {
 
     private lateinit var library: Library
-    private lateinit var adapter: BookAdapter
+    private lateinit var prefs: ReaderPrefs
+    private lateinit var adapter: LibraryAdapter
     private lateinit var list: RecyclerView
-    private lateinit var empty: TextView
     private lateinit var progress: CircularProgressIndicator
 
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -44,50 +47,69 @@ class LibraryActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val prefs = ReaderPrefs(this)
+        prefs = ReaderPrefs(this)
         AppCompatDelegate.setDefaultNightMode(
             if (prefs.theme.isDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
         )
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_library)
         library = Library(this)
 
         val root = findViewById<View>(R.id.root)
-        val toolbar = findViewById<MaterialToolbar>(R.id.toolbar)
-        val fab = findViewById<ExtendedFloatingActionButton>(R.id.add)
+        val topBar = findViewById<View>(R.id.topBar)
+        val smallTitle = findViewById<View>(R.id.smallTitle)
+        val topDivider = findViewById<View>(R.id.topDivider)
         list = findViewById(R.id.list)
-        empty = findViewById(R.id.empty)
         progress = findViewById(R.id.progress)
+
+        val night = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !night
+            isAppearanceLightNavigationBars = !night
+        }
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            toolbar.updatePadding(top = bars.top, left = bars.left, right = bars.right)
+            topBar.updatePadding(top = bars.top, left = bars.left, right = bars.right)
             list.updatePadding(
-                left = bars.left + dp(12), right = bars.right + dp(12),
-                bottom = bars.bottom + dp(96)
+                top = bars.top + dpi(52),
+                left = bars.left + dpi(14), right = bars.right + dpi(14),
+                bottom = bars.bottom + dpi(24)
             )
-            (fab.layoutParams as ViewGroup.MarginLayoutParams).apply {
-                bottomMargin = bars.bottom + dp(24)
-                rightMargin = bars.right + dp(24)
-            }
-            fab.requestLayout()
             insets
         }
 
         // Más columnas cuando el Fold está abierto
-        val columns = max(2, resources.configuration.screenWidthDp / 150)
-        list.layoutManager = GridLayoutManager(this, columns)
-        adapter = BookAdapter(
-            onOpen = { openBook(it) },
-            onLongPress = { confirmDelete(it) },
-        )
+        val columns = max(3, resources.configuration.screenWidthDp / 132)
+        val glm = GridLayoutManager(this, columns)
+        glm.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+            override fun getSpanSize(position: Int) = if (position == 0) columns else 1
+        }
+        list.layoutManager = glm
+        adapter = LibraryAdapter()
         list.adapter = adapter
 
-        fab.setOnClickListener {
-            picker.launch(arrayOf("application/epub+zip", "application/octet-stream", "*/*"))
-        }
+        // Título grande que se convierte en título compacto al desplazar (iOS)
+        list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                val off = rv.computeVerticalScrollOffset().toFloat()
+                val f = min(1f, max(0f, (off - dp(20f)) / dp(24f)))
+                smallTitle.alpha = f
+                topDivider.alpha = f
+                topBar.setBackgroundColor(if (f > 0f) withAlpha(color(R.color.bg_grouped), (0xF0 * f).toInt()) else 0)
+            }
+        })
 
+        findViewById<View>(R.id.add).setOnClickListener { pickBook() }
         handleIntent(intent)
+    }
+
+    private fun withAlpha(c: Int, a: Int) = (c and 0x00FFFFFF) or (a shl 24)
+
+    private fun pickBook() {
+        picker.launch(arrayOf("application/epub+zip", "application/octet-stream", "*/*"))
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -119,9 +141,14 @@ class LibraryActivity : AppCompatActivity() {
     }
 
     private fun refresh() {
-        val books = library.all()
-        adapter.submit(books)
-        empty.visibility = if (books.isEmpty()) View.VISIBLE else View.GONE
+        val all = library.all()
+        val sorted = when (prefs.librarySort) {
+            LibrarySort.RECENT -> all
+            LibrarySort.TITLE -> all.sortedBy { it.title.lowercase() }
+            LibrarySort.AUTHOR -> all.sortedBy { it.author.lowercase() }
+        }
+        val hero = all.firstOrNull { it.progress > 0f && it.progress < 0.999f }
+        adapter.submit(sorted, hero)
     }
 
     private fun importBook(uri: Uri, open: Boolean) {
@@ -142,73 +169,158 @@ class LibraryActivity : AppCompatActivity() {
         startActivity(Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_ID, entry.id))
     }
 
-    private fun confirmDelete(entry: BookEntry) {
-        MaterialAlertDialogBuilder(this)
-            .setTitle(entry.title)
-            .setMessage("¿Quitar este libro de la biblioteca?")
-            .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Quitar") { _, _ ->
-                library.delete(entry.id)
-                refresh()
+    private fun showBookMenu(anchor: View, entry: BookEntry) {
+        anchor.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        PopupMenu(this, anchor).apply {
+            menu.add(0, 1, 0, "Leer")
+            menu.add(0, 2, 1, "Marcar como no leído")
+            menu.add(0, 3, 2, "Quitar de la biblioteca")
+            setOnMenuItemClickListener {
+                when (it.itemId) {
+                    1 -> openBook(entry)
+                    2 -> { library.resetProgress(entry.id); refresh() }
+                    3 -> { library.delete(entry.id); refresh() }
+                }
+                true
             }
-            .show()
+            show()
+        }
     }
 
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    // ------------------------------------------------------------------ portadas
 
-    private class BookAdapter(
-        val onOpen: (BookEntry) -> Unit,
-        val onLongPress: (BookEntry) -> Unit,
-    ) : RecyclerView.Adapter<BookAdapter.Holder>() {
+    private val coverCache = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
 
+    private fun bindCover(path: String?, title: String, image: ImageView, fallback: TextView) {
+        val bmp = path?.let { p ->
+            coverCache.get(p) ?: (if (File(p).exists()) BitmapFactory.decodeFile(p) else null)?.also { coverCache.put(p, it) }
+        }
+        if (bmp != null) {
+            image.setImageBitmap(bmp)
+            fallback.visibility = View.GONE
+        } else {
+            image.setImageDrawable(null)
+            fallback.text = title
+            fallback.visibility = View.VISIBLE
+        }
+    }
+
+    // ------------------------------------------------------------------ adaptador
+
+    private inner class LibraryAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private var items: List<BookEntry> = emptyList()
+        private var hero: BookEntry? = null
 
-        fun submit(list: List<BookEntry>) {
+        fun submit(list: List<BookEntry>, heroBook: BookEntry?) {
             items = list
+            hero = heroBook
             @Suppress("NotifyDataSetChanged")
             notifyDataSetChanged()
         }
 
-        class Holder(v: View) : RecyclerView.ViewHolder(v) {
-            val coverBox: View = v.findViewById(R.id.coverBox)
-            val cover: ImageView = v.findViewById(R.id.cover)
-            val coverTitle: TextView = v.findViewById(R.id.coverTitle)
-            val title: TextView = v.findViewById(R.id.title)
-            val author: TextView = v.findViewById(R.id.author)
-            val progress: LinearProgressIndicator = v.findViewById(R.id.bookProgress)
+        override fun getItemCount() = items.size + 1
+        override fun getItemViewType(position: Int) = if (position == 0) 0 else 1
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+            val inf = LayoutInflater.from(parent.context)
+            return if (viewType == 0) HeaderHolder(inf.inflate(R.layout.item_library_header, parent, false))
+            else BookHolder(inf.inflate(R.layout.item_book, parent, false))
         }
 
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
-            val v = LayoutInflater.from(parent.context).inflate(R.layout.item_book, parent, false)
-            return Holder(v)
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+            when (holder) {
+                is HeaderHolder -> holder.bind(items, hero)
+                is BookHolder -> holder.bind(items[position - 1])
+            }
+        }
+    }
+
+    private inner class HeaderHolder(v: View) : RecyclerView.ViewHolder(v) {
+        val count: TextView = v.findViewById(R.id.count)
+        val heroBox: View = v.findViewById(R.id.hero)
+        val heroCover: ImageView = v.findViewById(R.id.heroCover)
+        val heroCoverTitle: TextView = v.findViewById(R.id.heroCoverTitle)
+        val heroTitle: TextView = v.findViewById(R.id.heroTitle)
+        val heroAuthor: TextView = v.findViewById(R.id.heroAuthor)
+        val heroProgress: LinearProgressIndicator = v.findViewById(R.id.heroProgress)
+        val heroPercent: TextView = v.findViewById(R.id.heroPercent)
+        val heroContinue: View = v.findViewById(R.id.heroContinue)
+        val empty: View = v.findViewById(R.id.empty)
+        val section: View = v.findViewById(R.id.section)
+        val sortBox: FrameLayout = v.findViewById(R.id.sortBox)
+        val sort = SegmentedControl(v.context)
+
+        init {
+            sortBox.addView(sort)
+            sort.setOptions(LibrarySort.entries.map { it.label }, prefs.librarySort.ordinal)
+            sort.onSelected = { i ->
+                prefs.librarySort = LibrarySort.entries[i]
+                refresh()
+            }
+            v.findViewById<View>(R.id.emptyAdd).setOnClickListener { pickBook() }
         }
 
-        override fun getItemCount() = items.size
+        fun bind(books: List<BookEntry>, hero: BookEntry?) {
+            count.text = when (books.size) {
+                0 -> ""
+                1 -> "1 libro"
+                else -> "${books.size} libros"
+            }
+            count.visibility = if (books.isEmpty()) View.GONE else View.VISIBLE
+            empty.visibility = if (books.isEmpty()) View.VISIBLE else View.GONE
+            section.visibility = if (books.isEmpty()) View.GONE else View.VISIBLE
+            if (hero == null) {
+                heroBox.visibility = View.GONE
+            } else {
+                heroBox.visibility = View.VISIBLE
+                bindCover(hero.coverPath, hero.title, heroCover, heroCoverTitle)
+                heroTitle.text = hero.title
+                heroAuthor.text = hero.author
+                heroProgress.progress = (hero.progress * 1000).toInt()
+                heroPercent.text = "${(hero.progress * 100).toInt()} % leído"
+                heroBox.setOnClickListener { openBook(hero) }
+                heroContinue.setOnClickListener { openBook(hero) }
+            }
+        }
+    }
 
-        override fun onBindViewHolder(h: Holder, position: Int) {
-            val e = items[position]
-            h.title.text = e.title
-            h.author.text = e.author
-            h.progress.progress = (e.progress * 1000).toInt()
-            // Portada con proporción 2:3
-            h.itemView.post {
-                val w = h.coverBox.width
-                if (w > 0 && h.coverBox.layoutParams.height != w * 3 / 2) {
-                    h.coverBox.layoutParams.height = w * 3 / 2
-                    h.coverBox.requestLayout()
+    private inner class BookHolder(v: View) : RecyclerView.ViewHolder(v) {
+        val coverCard: View = v.findViewById(R.id.coverCard)
+        val cover: ImageView = v.findViewById(R.id.cover)
+        val coverTitle: TextView = v.findViewById(R.id.coverTitle)
+        val title: TextView = v.findViewById(R.id.title)
+        val status: TextView = v.findViewById(R.id.status)
+
+        fun bind(e: BookEntry) {
+            title.text = e.title
+            val pct = (e.progress * 100).toInt()
+            when {
+                e.progress <= 0f -> {
+                    status.text = "NUEVO"
+                    status.setTextColor(color(R.color.accent))
+                }
+                e.progress >= 0.999f -> {
+                    status.text = "Terminado"
+                    status.setTextColor(color(R.color.label_secondary))
+                }
+                else -> {
+                    status.text = "$pct %"
+                    status.setTextColor(color(R.color.label_secondary))
                 }
             }
-            val bmp = e.coverPath?.let { if (File(it).exists()) BitmapFactory.decodeFile(it) else null }
-            if (bmp != null) {
-                h.cover.setImageBitmap(bmp)
-                h.coverTitle.visibility = View.GONE
-            } else {
-                h.cover.setImageDrawable(null)
-                h.coverTitle.text = e.title
-                h.coverTitle.visibility = View.VISIBLE
+            // Portada con proporción 2:3
+            itemView.post {
+                val w = coverCard.width
+                if (w > 0 && coverCard.layoutParams.height != w * 3 / 2) {
+                    coverCard.layoutParams.height = w * 3 / 2
+                    coverCard.requestLayout()
+                }
             }
-            h.itemView.setOnClickListener { onOpen(e) }
-            h.itemView.setOnLongClickListener { onLongPress(e); true }
+            bindCover(e.coverPath, e.title, cover, coverTitle)
+            coverCard.setOnClickListener { openBook(e) }
+            coverCard.setOnLongClickListener { showBookMenu(it, e); true }
         }
     }
 }
