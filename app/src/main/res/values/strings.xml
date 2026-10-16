@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">EpubFold</string>
+    <string name="library">Mi biblioteca</string>
+    <string name="open_epub">Abrir EPUB</string>
+    <string name="empty_library">Tu biblioteca está vacía.\nToca «Abrir EPUB» para añadir un libro.</string>
+    <string name="back">Atrás</string>
+    <string name="contents">Índice</string>
+    <string name="theme">Tema</string>
+    <string name="text_settings">Ajustes de lectura</string>
+</resources>
