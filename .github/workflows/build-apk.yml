@@ -57,6 +57,35 @@ jobs:
           name: EpubFold-apk
           path: EpubFold-*.apk
 
+      # Repo público con sólo el último APK: la app lo consulta para avisar de actualizaciones.
+      # Se publica un único commit huérfano (force push) para que el repo no crezca.
+      - name: Publish update channel (optional)
+        env:
+          RELEASES_DEPLOY_KEY: ${{ secrets.RELEASES_DEPLOY_KEY }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if [ -z "$RELEASES_DEPLOY_KEY" ]; then
+            echo "Sin RELEASES_DEPLOY_KEY: no se publica el canal de actualizaciones"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$RELEASES_DEPLOY_KEY" > ~/.ssh/releases_key
+          chmod 600 ~/.ssh/releases_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/releases_key -o StrictHostKeyChecking=accept-new"
+          N=${{ github.run_number }}
+          mkdir channel && cd channel
+          git init -q -b main
+          cp ../EpubFold-$N.apk EpubFold.apk
+          NOTES=$(printf '%s' "${COMMIT_MSG:-Build $N}" | head -c 600)
+          jq -n --argjson code "$N" --arg name "1.0.$N" --arg notes "$NOTES" --arg sha "${{ github.sha }}" \
+            --arg apk "https://raw.githubusercontent.com/emmanuelquintana/epub-fold-releases/main/EpubFold.apk" \
+            '{versionCode: $code, versionName: $name, notes: $notes, sha: $sha, apk: $apk}' > latest.json
+          printf '# EpubFold\n\nÚltimo APK: [EpubFold.apk](EpubFold.apk) (build %s).\n' "$N" > README.md
+          git add -A
+          git -c user.name="EpubFold CI" -c user.email="ci@epubfold.invalid" commit -q -m "Build $N"
+          git push -q --force git@github.com:emmanuelquintana/epub-fold-releases.git main
+          echo "Canal de actualizaciones publicado: build $N"
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
