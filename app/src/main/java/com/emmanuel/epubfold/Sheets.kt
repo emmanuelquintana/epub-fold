@@ -27,6 +27,8 @@ class SheetRow(
     val trailing: CharSequence? = null,
     val highlighted: Boolean = false,
     val onLongClick: (() -> Unit)? = null,
+    /** Texto que se arrastra a otra app (Fold abierto con pantalla dividida). */
+    val dragText: String? = null,
     val onClick: () -> Unit,
 )
 
@@ -35,6 +37,8 @@ class RowAdapter : RecyclerView.Adapter<RowAdapter.Holder>() {
     var textColor: Int? = null
     var secondaryColor: Int? = null
     var accentColor: Int? = null
+    /** Mantener pulsado arrastra el texto de la fila en lugar de abrir su menú. */
+    var dragEnabled = false
 
     var rows: List<SheetRow> = emptyList()
         set(value) {
@@ -68,7 +72,19 @@ class RowAdapter : RecyclerView.Adapter<RowAdapter.Holder>() {
         h.caption.text = r.caption
         h.trailing.text = r.trailing ?: ""
         h.itemView.setOnClickListener { r.onClick() }
-        h.itemView.setOnLongClickListener { r.onLongClick?.invoke(); r.onLongClick != null }
+        h.itemView.setOnLongClickListener { v ->
+            val drag = r.dragText
+            if (dragEnabled && drag != null) {
+                v.startDragAndDrop(
+                    android.content.ClipData.newPlainText("EpubFold", drag),
+                    View.DragShadowBuilder(v), null, View.DRAG_FLAG_GLOBAL
+                )
+                true
+            } else {
+                r.onLongClick?.invoke()
+                r.onLongClick != null
+            }
+        }
     }
 }
 
@@ -116,6 +132,9 @@ class SettingsSheet(
     private val onAutoTheme: () -> Unit,
     private val onRuler: (() -> Unit)? = null,
     private val onSpeedRead: (() -> Unit)? = null,
+    private val onScrollMode: (() -> Unit)? = null,
+    private val onHandsFree: (() -> Unit)? = null,
+    private val onTranslatePage: (() -> Unit)? = null,
 ) {
     private val ctx = activity
     private val accent = ctx.color(R.color.accent)
@@ -320,6 +339,35 @@ class SettingsSheet(
             val focus = group(col)
             onRuler?.let { cb ->
                 focus.addView(switchRow("Regla de lectura (resalta unas líneas)", prefs.ruler) { prefs.ruler = it; cb() })
+            }
+            onScrollMode?.let { cb ->
+                focus.addView(hairline(ctx, ctx.dpi(16)))
+                focus.addView(segmentRow("Modo de lectura", listOf("Páginas", "Continuo"), if (prefs.scrollMode) 1 else 0) {
+                    prefs.scrollMode = it == 1
+                    cb()
+                })
+            }
+            onHandsFree?.let { cb ->
+                focus.addView(hairline(ctx, ctx.dpi(16)))
+                focus.addView(segmentRow(
+                    "Pasar página sin tocar · Mano: pásala sobre la cámara frontal (mantenla para volver) · Inclinar: giro rápido",
+                    HandsFreeMode.entries.map { it.label }, prefs.handsFree.ordinal,
+                ) {
+                    prefs.handsFree = HandsFreeMode.entries[it]
+                    cb()
+                })
+            }
+            onTranslatePage?.let { cb ->
+                focus.addView(hairline(ctx, ctx.dpi(16)))
+                focus.addView(TextView(ctx).apply {
+                    text = "Traducción de la página…"
+                    setTextAppearance(R.style.Text_Body)
+                    setTextColor(accent)
+                    minimumHeight = ctx.dpi(50)
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(ctx.dpi(16), 0, ctx.dpi(16), 0)
+                    setOnClickListener { dialogRef?.dismiss(); cb() }
+                })
             }
             onSpeedRead?.let { cb ->
                 if (onRuler != null) focus.addView(hairline(ctx, ctx.dpi(16)))

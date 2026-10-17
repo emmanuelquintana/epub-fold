@@ -116,13 +116,14 @@ object CloudSync {
             "lastOpened" to b.lastOpened,
             "annotations" to notes.toJson().toString(),
             "annotationsUpdatedAt" to notes.updatedAt,
+            "tags" to b.tags.joinToString("|"),
         )
     }
 
     private suspend fun pushStats(context: Context, uid: String) {
         val stats = ReadingStats(context)
         userDoc(uid).collection("meta").document("stats")
-            .set(mapOf("days" to stats.toJson().toString()), SetOptions.merge()).await()
+            .set(mapOf("days" to stats.toJson().toString(), "books" to stats.booksJson().toString()), SetOptions.merge()).await()
     }
 
     /** Sincronización completa en ambos sentidos. */
@@ -151,6 +152,7 @@ object CloudSync {
                     put("updatedAt", doc.getLong("updatedAt") ?: 0L)
                     put("lastOpened", doc.getLong("lastOpened") ?: 0L)
                     put("annotations", doc.getString("annotations") ?: "{}")
+                    doc.getString("tags")?.let { put("tags", it) }
                 }
                 if (Backup.mergeBook(context, local, o)) pulled++
                 // Si lo local es más nuevo, lo subimos
@@ -170,9 +172,10 @@ object CloudSync {
                     pushed++
                 }
             }
-            // Estadísticas: máximo por día
+            // Estadísticas: máximo por día (y por libro, para el resumen anual)
             val statsDoc = userDoc(u.uid).collection("meta").document("stats").get().await()
             statsDoc.getString("days")?.let { runCatching { ReadingStats(context).mergeFrom(JSONObject(it)) } }
+            statsDoc.getString("books")?.let { runCatching { ReadingStats(context).mergeBooks(JSONObject(it)) } }
             pushStats(context, u.uid)
         }
         ReaderPrefs(context).lastSync = System.currentTimeMillis()

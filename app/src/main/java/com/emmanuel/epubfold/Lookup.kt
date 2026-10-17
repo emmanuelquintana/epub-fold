@@ -41,6 +41,8 @@ class LookupSheet(
     private val scope: LifecycleCoroutineScope,
     private val prefs: ReaderPrefs,
     private val bookLanguage: String,
+    /** Significado encontrado (definición o «→ traducción»), para guardarlo en el vocabulario. */
+    private val onMeaning: ((String) -> Unit)? = null,
 ) {
     private val ctx = activity
 
@@ -149,6 +151,10 @@ class LookupSheet(
                 content.addView(note("No se encontró una definición (o no hay conexión). Prueba «Otras apps» o la traducción."))
             } else {
                 content.addView(body(format(result)))
+                onMeaning?.invoke(
+                    result.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("=") }
+                        .take(2).joinToString(" ").take(240)
+                )
                 content.addView(note("Fuente: Wikcionario (CC BY-SA)").apply { setPadding(0, ctx.dpi(12), 0, 0) })
             }
         }
@@ -243,6 +249,7 @@ class LookupSheet(
                         val result = translator.translate(text).await()
                         out.removeAllViews()
                         out.addView(body(result).apply { setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f) })
+                        onMeaning?.invoke("→ $result")
                         out.addView(note("Traducido de ${srcTag.uppercase()} sin conexión con ML Kit").apply {
                             setPadding(0, ctx.dpi(10), 0, 0)
                         })

@@ -50,7 +50,31 @@ class ReadAloud(
 
     fun setLanguage(tag: String) {
         if (tag.isNotEmpty()) language = Locale.forLanguageTag(tag)
-        if (ready) applyLanguage()
+        if (ready) {
+            applyLanguage()
+            applyVoice()
+        }
+    }
+
+    /** Nombre de la voz elegida (null = la predeterminada del idioma). */
+    var voiceName: String? = null
+        set(value) {
+            field = value
+            if (ready) {
+                applyLanguage()
+                applyVoice()
+            }
+        }
+
+    /** El motor ya iniciado (para listar sus voces), o null. */
+    fun engine(): TextToSpeech? = if (ready) tts else null
+
+    fun ensureStarted(context: Context) = ensureEngine(context)
+
+    private fun applyVoice() {
+        val t = tts ?: return
+        val name = voiceName ?: return
+        runCatching { t.voices?.firstOrNull { it.name == name }?.let { t.voice = it } }
     }
 
     private fun ensureEngine(context: Context) {
@@ -60,6 +84,7 @@ class ReadAloud(
                 if (status == TextToSpeech.SUCCESS) {
                     ready = true
                     applyLanguage()
+                    applyVoice()
                     tts?.setSpeechRate(rate)
                     tts?.setOnUtteranceProgressListener(listener)
                     pendingStart?.let { (c, o) -> speakFrom(c, o) }

@@ -120,19 +120,26 @@ class ImageReaderActivity : AppCompatActivity() {
         }
     }
 
+    private val handsFree by lazy { HandsFree(this) { forward -> if (!overlay) turn(forward) } }
+
     override fun onResume() {
         super.onResume()
-        if (::entry.isInitialized) lastActivity = SystemClock.elapsedRealtime()
+        if (::entry.isInitialized) {
+            lastActivity = SystemClock.elapsedRealtime()
+            handsFree.start(ReaderPrefs(this).handsFree)
+        }
     }
 
     override fun onPause() {
         super.onPause()
         if (!::entry.isInitialized) return
+        handsFree.stop()
         markActivity()
         lastActivity = 0L
         savePosition()
         CloudSync.schedulePush(applicationContext, entry.id)
         Widgets.updateAll(applicationContext)
+        Clubs.pushProgress(applicationContext, entry.id)
     }
 
     override fun onDestroy() {
@@ -353,7 +360,7 @@ class ImageReaderActivity : AppCompatActivity() {
 
     private fun markActivity() {
         val now = SystemClock.elapsedRealtime()
-        if (lastActivity > 0L) stats.addSeconds(min(((now - lastActivity) / 1000L).toInt(), 180))
+        if (lastActivity > 0L) stats.addSeconds(min(((now - lastActivity) / 1000L).toInt(), 180), entry.key)
         lastActivity = now
     }
 

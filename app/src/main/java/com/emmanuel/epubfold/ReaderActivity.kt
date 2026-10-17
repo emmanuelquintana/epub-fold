@@ -106,6 +106,17 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     private var pendingHighlight: Triple<Int, Int, Int>? = null
     /** Momento (elapsedRealtime) en que el temporizador detiene la lectura; 0 = sin temporizador. */
     private var sleepAt = 0L
+    private lateinit var scrollView: ScrollBookView
+    /** Desplazamiento continuo activo (se decide en cada relayout). */
+    private var scrollMode = false
+    private var translationPanel: TranslationPanel? = null
+    private lateinit var handsFree: HandsFree
+    private var flexPanel: LinearLayout? = null
+    private var flexInfo: TextView? = null
+    private var flexPlay: TextView? = null
+    private var flexMode = false
+    /** Tras plegar o desplegar, resaltar un momento la línea donde ibas. */
+    private var flashOnLayout = false
     private lateinit var insetsController: WindowInsetsControllerCompat
     private lateinit var selectionMenu: SelectionMenu
     private lateinit var readAloud: ReadAloud
@@ -182,6 +193,13 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         findViewById<FrameLayout>(R.id.root).addView(ruler, 1, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         ruler.visibility = if (prefs.ruler) View.VISIBLE else View.GONE
+        scrollView = ScrollBookView(this)
+        findViewById<FrameLayout>(R.id.bookFrame).addView(scrollView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        scrollView.visibility = View.GONE
+        scrollView.listener = this
+        scrollView.highlightsFor = { ch -> notes.highlightsIn(ch) }
+        scrollView.onPositionChanged = { pos -> onScrollPosition(pos) }
+        handsFree = HandsFree(this) { forward -> if (!overlayVisible) turnPage(forward) }
 
         insetsController = WindowInsetsControllerCompat(window, window.decorView)
         insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -230,6 +248,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             onError = { toast(it) },
         )
         readAloud.rate = prefs.ttsRate
+        readAloud.voiceName = prefs.ttsVoice
         readAloud.onChapterEndStop = {
             sleepAt = 0L
             updateTimerLabel()
@@ -272,6 +291,22 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         }
         findViewById<View>(R.id.playerClose).setOnClickListener { stopListening() }
         playerTimer.setOnClickListener { chooseSleepTimer() }
+        findViewById<View>(R.id.playerMore).setOnClickListener { anchor ->
+            android.widget.PopupMenu(this, anchor).apply {
+                menu.add(0, 1, 0, "Voz…")
+                menu.add(0, 2, 1, "Guardar capítulo como audio…")
+                menu.add(0, 3, 2, "Temporizador…")
+                setOnMenuItemClickListener {
+                    when (it.itemId) {
+                        1 -> chooseVoice()
+                        2 -> exportChapterAudio()
+                        3 -> chooseSleepTimer()
+                    }
+                    true
+                }
+                show()
+            }
+        }
         updateTimerLabel()
 
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -280,7 +315,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             }
             override fun onStartTrackingTouch(sb: SeekBar) {}
             override fun onStopTrackingTouch(sb: SeekBar) {
-                bookView.goTo(sb.progress)
+                navigate(sb.progress)
             }
         })
 
@@ -311,6 +346,9 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
                             bookPosture = posture
                             relayout()
                         }
+                        val flex = fold != null && fold.state == FoldingFeature.State.HALF_OPENED &&
+                            fold.orientation == FoldingFeature.Orientation.HORIZONTAL
+                        setFlexMode(if (flex) fold!!.bounds else null)
                     }
             }
         }
@@ -330,12 +368,14 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         lastActivity = SystemClock.elapsedRealtime()
         checkAutoTheme()
         handler.postDelayed(autoTick, 60_000)
+        startHandsFree()
     }
 
     override fun onPause() {
         super.onPause()
         if (!::selectionMenu.isInitialized) return
         handler.removeCallbacks(autoTick)
+        handsFree.stop()
         markActivity()
         lastActivity = 0L
         savePosition()
@@ -343,6 +383,8 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         notebookView?.flush()
         CloudSync.schedulePush(applicationContext, entry.id)
         handler.postDelayed({ Widgets.updateAll(applicationContext) }, 500)
+        Integrations.autoSync(applicationContext)
+        Clubs.pushProgress(applicationContext, entry.id)
     }
 
     override fun onDestroy() {
@@ -370,6 +412,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
 
     override fun onSizeReady(w: Int, h: Int) {
         if (viewSize == Pair(w, h)) return
+        flashOnLayout = viewSize != null
         viewSize = Pair(w, h)
         relayout()
     }
@@ -384,6 +427,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         updateBookmarkIcon()
         savePosition()
         if (::sideAdapter.isInitialized && sidePanel.visibility == View.VISIBLE && sideTabs.selected == 0) refreshSide()
+        onPageShown()
     }
 
     override fun onCenterTap() {
@@ -410,11 +454,11 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         }
         if (isWord) actions += "Definir" to {
             finishSelection()
-            lookup(text, false)
+            lookup(text, false, sel)
         }
         actions += "Traducir" to {
             finishSelection()
-            lookup(text, true)
+            lookup(text, true, sel)
         }
         actions += "Escuchar" to {
             finishSelection()
@@ -424,7 +468,11 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             finishSelection()
             shareText("“${text.trim()}”\n\n— ${entry.title}${if (entry.author.isNotEmpty()) ", ${entry.author}" else ""}")
         }
-        selectionMenu.show(bookView, anchor, null, onColor = { c ->
+        actions += "Tarjeta" to {
+            finishSelection()
+            QuoteCard.share(this, text, "", entry)
+        }
+        selectionMenu.show(surface(), anchor, null, onColor = { c ->
             notes.addHighlight(sel.chapter, sel.start, sel.end, c, text)
             finishSelection()
             afterNotesChanged()
@@ -433,7 +481,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
 
     override fun onTextTap(chapter: Int, offset: Int): Boolean {
         val h = notes.highlightAt(chapter, offset) ?: return false
-        val anchor = bookView.rangeAnchor(h.chapter, h.start, h.end) ?: return false
+        val anchor = anchorFor(h.chapter, h.start, h.end) ?: return false
         if (overlayVisible) setOverlay(false)
         val actions = ArrayList<Pair<String, () -> Unit>>()
         actions += (if (h.note.isBlank()) "Añadir nota" else "Editar nota") to {
@@ -446,12 +494,16 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             val noteText = if (h.note.isNotBlank()) "\n\nNota: ${h.note}" else ""
             shareText("“${h.text.trim()}”$noteText\n\n— ${entry.title}")
         }
+        actions += "Tarjeta" to {
+            selectionMenu.dismiss()
+            QuoteCard.share(this, h.text, h.note, entry, HIGHLIGHT_COLORS.getOrElse(h.color) { HIGHLIGHT_COLORS[0] })
+        }
         actions += "Borrar" to {
             selectionMenu.dismiss()
             notes.removeHighlight(h)
             afterNotesChanged()
         }
-        selectionMenu.show(bookView, anchor, h.color, onColor = { c ->
+        selectionMenu.show(surface(), anchor, h.color, onColor = { c ->
             notes.updateHighlight(h.copy(color = c))
             selectionMenu.dismiss()
             afterNotesChanged()
@@ -468,7 +520,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
 
     private fun finishSelection() {
         selectionMenu.dismiss()
-        bookView.clearSelection()
+        clearSelections()
     }
 
     private fun afterNotesChanged() {
@@ -490,8 +542,286 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         startActivity(Intent.createChooser(i, "Compartir"))
     }
 
-    private fun lookup(text: String, translate: Boolean) {
-        LookupSheet(this, lifecycleScope, prefs, book?.language ?: "").show(text, translate)
+    private fun lookup(text: String, translate: Boolean, sel: BookView.TextSelection? = null) {
+        val word = text.trim()
+        val isWord = !word.contains(' ') && word.length in 2..40
+        if (isWord) {
+            // Se guarda en el vocabulario con la frase donde aparece
+            val context = sel?.let { s ->
+                bookView.paginator?.textOf(s.chapter)?.let { Vocabulary.sentenceAround(it, s.start, s.end) }
+            } ?: ""
+            Vocabulary(this).add(word, context, entry.title)
+        }
+        LookupSheet(this, lifecycleScope, prefs, book?.language ?: "") { meaning ->
+            if (isWord && meaning.isNotBlank()) Vocabulary(this).setMeaning(word, meaning)
+        }.show(text, translate)
+    }
+
+    // ---------------------------------------------------------------- páginas o desplazamiento continuo
+
+    private fun surface(): View = if (scrollMode) scrollView else bookView
+
+    private fun isSpread() = !scrollMode && bookView.spread
+
+    private fun currentPage(): Int {
+        if (!scrollMode) return bookView.currentPage
+        val p = bookView.paginator ?: return 0
+        return p.pageFor(scrollView.position() ?: position)
+    }
+
+    private fun navigate(page: Int) {
+        if (scrollMode) bookView.paginator?.let { scrollView.scrollTo(it.positionOf(page)) } else bookView.goTo(page)
+    }
+
+    private fun turnPage(forward: Boolean) {
+        if (scrollMode) scrollView.turn(forward) else bookView.turn(forward)
+    }
+
+    private fun showHighlight(t: Triple<Int, Int, Int>?) {
+        bookView.highlight = t
+        scrollView.highlight = t
+        if (scrollMode && t != null) bookView.paginator?.let { scrollView.scrollTo(ReadingPosition(t.first, t.second)) }
+    }
+
+    private fun setSpeakRange(t: Triple<Int, Int, Int>?) {
+        bookView.speakRange = t
+        scrollView.speakRange = if (scrollMode) t else null
+    }
+
+    private fun clearSelections() {
+        bookView.clearSelection()
+        scrollView.clearSelection()
+    }
+
+    private fun anchorFor(ch: Int, s: Int, e: Int) =
+        if (scrollMode) scrollView.rangeAnchor(ch, s, e) else bookView.rangeAnchor(ch, s, e)
+
+    private fun onScrollPosition(pos: ReadingPosition) {
+        val p = bookView.paginator ?: return
+        position = pos
+        val page = p.pageFor(pos)
+        markActivity()
+        seek.progress = page
+        updateInfo(page)
+        updateBookmarkIcon()
+        savePosition()
+        onPageShown()
+    }
+
+    /** Se llama cada vez que cambia lo que se ve (página o desplazamiento). */
+    private fun onPageShown() {
+        if (::sideTabs.isInitialized && sidePanel.visibility == View.VISIBLE && sideTabs.selected == 4) {
+            translationPanel?.showPage(currentPageText())
+        }
+        updateFlexPanel()
+    }
+
+    /** Texto de la página (o de las dos, en doble página) que se está viendo. */
+    private fun currentPageText(): String {
+        val p = bookView.paginator ?: return ""
+        val page = currentPage()
+        val pages = if (isSpread()) listOf(page, page + 1) else listOf(page)
+        return pages.mapNotNull { i ->
+            val pg = p.pages.getOrNull(i) ?: return@mapNotNull null
+            val t = p.textOf(pg.chapter)
+            val r = p.charRange(i)
+            val s = r.first.coerceIn(0, t.length)
+            t.subSequence(s, (r.last + 1).coerceIn(s, t.length)).toString()
+        }.joinToString("\n")
+    }
+
+    /** Al plegar o desplegar: resalta un momento la línea por la que ibas. */
+    private fun flashLine(pos: ReadingPosition) {
+        val l = bookView.paginator?.layouts?.getOrNull(pos.chapter) ?: return
+        val off = pos.charOffset.coerceIn(0, l.text.length)
+        val line = l.getLineForOffset(off)
+        val t = Triple(pos.chapter, l.getLineStart(line), l.getLineEnd(line))
+        bookView.highlight = t
+        scrollView.highlight = t
+        handler.postDelayed({
+            if (bookView.highlight == t) {
+                bookView.highlight = null
+                scrollView.highlight = null
+            }
+        }, 1800)
+    }
+
+    private fun startHandsFree() {
+        if (!::handsFree.isInitialized) return
+        if (!handsFree.start(prefs.handsFree)) {
+            toast(if (prefs.handsFree == HandsFreeMode.WAVE) "Este teléfono no tiene sensor de proximidad" else "Este teléfono no tiene acelerómetro")
+        }
+    }
+
+    private fun showTranslationSheet() {
+        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val panel = TranslationPanel(this, lifecycleScope, prefs, book?.language ?: "")
+        panel.setPadding(dpi(16), dpi(16), dpi(16), 0)
+        panel.setColors(color(R.color.label), color(R.color.label_secondary))
+        dialog.setContentView(panel, android.view.ViewGroup.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.8f).toInt()))
+        dialog.behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+        dialog.behavior.skipCollapsed = true
+        dialog.behavior.maxWidth = dpi(680)
+        dialog.setOnDismissListener { panel.dispose() }
+        dialog.show()
+        panel.showPage(currentPageText())
+    }
+
+    // ---------------------------------------------------------------- voces y audio
+
+    private fun chooseVoice() {
+        val tts = readAloud.engine()
+        if (tts == null) {
+            readAloud.ensureStarted(this)
+            toast("Cargando las voces… vuelve a pulsar en un momento")
+            return
+        }
+        val voices = Voices.forLanguage(tts, book?.language ?: "")
+        if (voices.isEmpty()) {
+            toast("No hay voces instaladas para este idioma. Instálalas en Ajustes › Texto a voz.")
+            return
+        }
+        val labels = (listOf("Automática (la del sistema)") + voices.mapIndexed { i, v -> Voices.label(v, i) }).toTypedArray()
+        val current = voices.indexOfFirst { it.name == prefs.ttsVoice } + 1
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Voz")
+            .setSingleChoiceItems(labels, current) { _, which ->
+                prefs.ttsVoice = if (which == 0) null else voices[which - 1].name
+                readAloud.voiceName = prefs.ttsVoice
+                if (readAloud.playing) readAloud.play(this, readAloud.chapter, readAloud.offset)
+            }
+            .setPositiveButton("Listo", null)
+            .setNeutralButton("Instalar más voces") { _, _ ->
+                runCatching { startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
+            }
+            .show()
+    }
+
+    private fun exportChapterAudio() {
+        val p = bookView.paginator ?: return
+        val b = book ?: return
+        val ch = if (player.visibility == View.VISIBLE) readAloud.chapter else p.positionOf(currentPage()).chapter
+        val title = b.chapterTitle(ch)
+        val exporter = AudioExport(this)
+        val bar = com.google.android.material.progressindicator.LinearProgressIndicator(this).apply { max = 100 }
+        val box = FrameLayout(this).apply {
+            setPadding(dpi(24), dpi(8), dpi(24), 0)
+            addView(bar)
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("Guardando «${title.take(60)}» como audio")
+            .setMessage("Con la voz y velocidad elegidas. Puede tardar unos minutos.")
+            .setView(box)
+            .setCancelable(false)
+            .setNegativeButton("Cancelar") { _, _ -> exporter.cancelled = true }
+            .show()
+        lifecycleScope.launch {
+            val r = runCatching {
+                withContext(Dispatchers.IO) {
+                    exporter.export(p.textOf(ch), "${entry.title.take(50)} - ${title.take(50)}", b.language,
+                        prefs.ttsVoice, prefs.ttsRate) { f -> runOnUiThread { bar.setProgressCompat((f * 100).toInt(), true) } }
+                }
+            }
+            dialog.dismiss()
+            r.onSuccess { toast("Guardado en $it") }
+                .onFailure { if (!exporter.cancelled) toast("No se pudo guardar el audio: ${it.message}") }
+        }
+    }
+
+    // ---------------------------------------------------------------- modo Flex (Fold medio plegado)
+
+    /** Con el teléfono medio plegado sobre la mesa: el libro arriba y los controles abajo. */
+    private fun setFlexMode(fold: android.graphics.Rect?) {
+        val content = findViewById<View>(R.id.content)
+        val root = findViewById<FrameLayout>(R.id.root)
+        val lp = content.layoutParams as FrameLayout.LayoutParams
+        if (fold == null) {
+            if (!flexMode) return
+            flexMode = false
+            lp.height = FrameLayout.LayoutParams.MATCH_PARENT
+            content.layoutParams = lp
+            flexPanel?.visibility = View.GONE
+            return
+        }
+        if (root.height == 0) {
+            root.post { setFlexMode(fold) }
+            return
+        }
+        flexMode = true
+        val loc = IntArray(2)
+        root.getLocationInWindow(loc)
+        lp.height = (fold.top - loc[1]).coerceAtLeast(dpi(200))
+        content.layoutParams = lp
+        val panel = flexPanel ?: buildFlexPanel().also { flexPanel = it; root.addView(it) }
+        panel.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, (root.height - (fold.bottom - loc[1])).coerceAtLeast(dpi(120)), Gravity.BOTTOM
+        )
+        panel.visibility = View.VISIBLE
+        setOverlay(false)
+        styleFlexPanel()
+        updateFlexPanel()
+    }
+
+    private fun buildFlexPanel(): LinearLayout {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dpi(24), dpi(16), dpi(24), dpi(16))
+            elevation = dp(6f)
+        }
+        flexInfo = TextView(this).apply {
+            gravity = Gravity.CENTER
+            textSize = 14f
+            maxLines = 2
+        }
+        panel.addView(flexInfo)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, dpi(16), 0, 0)
+        }
+        fun button(label: String, onClick: () -> Unit) = TextView(this).apply {
+            text = label
+            gravity = Gravity.CENTER
+            textSize = 17f
+            setPadding(dpi(18), dpi(14), dpi(18), dpi(14))
+            setOnClickListener { onClick() }
+        }
+        row.addView(button("‹ Anterior") { turnPage(false) }, LinearLayout.LayoutParams(0, -2, 1f))
+        flexPlay = button("▶ Escuchar") {
+            if (readAloud.playing) readAloud.pause()
+            else if (player.visibility == View.VISIBLE) readAloud.play(this, readAloud.chapter, readAloud.offset)
+            else startListening(null)
+        }
+        row.addView(flexPlay, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dpi(10); marginEnd = dpi(10) })
+        row.addView(button("Siguiente ›") { turnPage(true) }, LinearLayout.LayoutParams(0, -2, 1f))
+        panel.addView(row, LinearLayout.LayoutParams(-1, -2))
+        return panel
+    }
+
+    private fun styleFlexPanel() {
+        val panel = flexPanel ?: return
+        val t = colors
+        val card = ColorUtils.blendARGB(t.paper, t.text, if (t.isDark) 0.08f else 0.04f)
+        panel.setBackgroundColor(card)
+        flexInfo?.setTextColor(t.secondary)
+        val btn = ColorUtils.blendARGB(card, t.text, 0.08f)
+        (panel.getChildAt(1) as? LinearLayout)?.let { row ->
+            for (i in 0 until row.childCount) (row.getChildAt(i) as? TextView)?.apply {
+                setTextColor(if (i == 1) 0xFFFFFFFF.toInt() else t.text)
+                background = roundRect(if (i == 1) accent() else btn, dp(16f))
+            }
+        }
+    }
+
+    private fun updateFlexPanel() {
+        if (!flexMode) return
+        val p = bookView.paginator ?: return
+        val page = currentPage()
+        val ch = p.pages.getOrNull(page)?.chapter ?: 0
+        flexInfo?.text = "${book?.chapterTitle(ch) ?: ""}\nPágina ${page + 1} de ${p.pageCount}"
+        updatePlayer()
     }
 
     // ---------------------------------------------------------------- paginación
@@ -499,12 +829,14 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     private fun relayout() {
         val b = book ?: return
         val (w, h) = viewSize ?: return
-        bookView.paginator?.let { position = it.positionOf(bookView.currentPage) }
+        // En modo continuo la posición ya es la línea exacta
+        if (!scrollMode) bookView.paginator?.let { position = it.positionOf(currentPage()) }
         paginateJob?.cancel()
         selectionMenu.dismiss()
 
         val density = resources.displayMetrics.density
-        val spread = when (prefs.layoutMode) {
+        scrollMode = prefs.scrollMode
+        val spread = !scrollMode && when (prefs.layoutMode) {
             LayoutMode.SINGLE -> false
             LayoutMode.DOUBLE -> true
             LayoutMode.AUTO -> bookPosture || w / density >= 600f
@@ -530,12 +862,19 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             }
             loading.visibility = View.GONE
             bookView.setContent(p, m, spread, p.pageFor(target))
-            pendingHighlight?.let { bookView.highlight = it }
+            scrollView.visibility = if (scrollMode) View.VISIBLE else View.GONE
+            if (scrollMode) scrollView.setContent(p, m, target)
+            pendingHighlight?.let { showHighlight(it) }
             pendingHighlight = null
+            if (flashOnLayout) {
+                flashOnLayout = false
+                flashLine(target)
+            }
+            updateFlexPanel()
             ruler.bandHeight = paint.fontSpacing * lineSpacing * 3.2f
             seek.max = max(0, p.pageCount - 1)
-            seek.progress = bookView.currentPage
-            updateInfo(bookView.currentPage)
+            seek.progress = currentPage()
+            updateInfo(currentPage())
             updateBookmarkIcon()
             if (::sideAdapter.isInitialized && sidePanel.visibility == View.VISIBLE) refreshSide()
         }
@@ -546,12 +885,12 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         val b = book ?: return
         val pg = p.pages.getOrNull(page) ?: return
         chapterView.text = b.chapterTitle(pg.chapter)
-        pageInfo.text = if (bookView.spread && page + 1 < p.pageCount) {
+        pageInfo.text = if (isSpread() && page + 1 < p.pageCount) {
             "Páginas ${page + 1}–${page + 2} de ${p.pageCount}"
         } else {
             "Página ${page + 1} de ${p.pageCount}"
         }
-        val step = if (bookView.spread) 2 else 1
+        val step = if (isSpread()) 2 else 1
         val left = p.pagesLeftInChapter(page + step - 1).coerceAtLeast(0)
         val minutes = (left * prefs.secondsPerPage / 60f).roundToInt()
         val pct = if (p.pageCount > 1) page * 100 / (p.pageCount - 1) else 100
@@ -568,7 +907,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         val dt = (now - lastPageTime) / 1000f
         lastPageTime = now
         if (readAloud.playing) return
-        val perPage = dt / (if (bookView.spread) 2 else 1)
+        val perPage = dt / (if (isSpread()) 2 else 1)
         if (perPage in 4f..300f) {
             prefs.secondsPerPage = prefs.secondsPerPage * 0.85f + perPage * 0.15f
         }
@@ -579,7 +918,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         val now = SystemClock.elapsedRealtime()
         if (lastActivity > 0L) {
             val dt = ((now - lastActivity) / 1000L).toInt()
-            stats.addSeconds(min(dt, 180))
+            stats.addSeconds(min(dt, 180), entry.key)
         }
         lastActivity = now
     }
@@ -587,11 +926,11 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     private fun savePosition() {
         if (!::entry.isInitialized) return
         val p = bookView.paginator
-        val pos = p?.positionOf(bookView.currentPage) ?: position
+        val pos = if (scrollMode) position else p?.positionOf(currentPage()) ?: position
         val progress = when {
             p == null -> entry.progress
             p.pageCount <= 1 -> 1f
-            else -> ((bookView.currentPage + (if (bookView.spread) 1 else 0)).toFloat() / (p.pageCount - 1)).coerceAtMost(1f)
+            else -> ((currentPage() + (if (isSpread()) 1 else 0)).toFloat() / (p.pageCount - 1)).coerceAtMost(1f)
         }
         if (progress >= 0.999f && !finishedShown && p != null) {
             finishedShown = true
@@ -609,10 +948,22 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             it.finishedAt > 0L && java.util.Calendar.getInstance().apply { timeInMillis = it.finishedAt }
                 .get(java.util.Calendar.YEAR) == year
         } + 1
+        val next = library.nextInSeries(entry)
         MaterialAlertDialogBuilder(this)
             .setTitle("¡Terminaste «${entry.title}»!")
-            .setMessage("Llevas $done de ${prefs.yearlyGoalBooks} libros este año. ¡Sigue así!")
+            .setMessage(
+                "Llevas $done de ${prefs.yearlyGoalBooks} libros este año. ¡Sigue así!" +
+                    (next?.let { "\n\nSiguiente de la serie: «${it.title}»" } ?: "")
+            )
             .setPositiveButton("Genial", null)
+            .apply {
+                if (next != null) setNeutralButton("Leer el siguiente") { _, _ ->
+                    startActivity(LibraryActivity.readerIntent(this@ReaderActivity, next))
+                    finish()
+                } else setNeutralButton("Qué leer después") { _, _ ->
+                    startActivity(Intent(this@ReaderActivity, DiscoverActivity::class.java))
+                }
+            }
             .show()
     }
 
@@ -626,8 +977,8 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     }
 
     private fun currentBookmark(): Bookmark? {
-        val page = bookView.currentPage
-        return bookmarkFor(page) ?: if (bookView.spread) bookmarkFor(page + 1) else null
+        val page = currentPage()
+        return bookmarkFor(page) ?: if (isSpread()) bookmarkFor(page + 1) else null
     }
 
     private fun toggleBookmark() {
@@ -637,7 +988,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         if (existing != null) {
             notes.removeBookmark(existing)
         } else {
-            val page = bookView.currentPage
+            val page = currentPage()
             val pg = p.pages.getOrNull(page) ?: return
             val text = p.textOf(pg.chapter)
             val end = (pg.startChar + 140).coerceAtMost(text.length)
@@ -730,13 +1081,13 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     private fun showSpeedReader() {
         val p = bookView.paginator ?: return
         val b = book ?: return
-        val pos = p.positionOf(bookView.currentPage)
+        val pos = p.positionOf(currentPage())
         if (readAloud.playing) readAloud.pause()
         SpeedReader(
             this, prefs, colors, accent(), prefs.font.typeface(this),
             textOf = { p.textOf(it) }, chapterCount = b.spine.size,
         ) { ch, off ->
-            bookView.goTo(p.pageFor(ReadingPosition(ch, off)))
+            navigate(p.pageFor(ReadingPosition(ch, off)))
         }.show(pos.chapter, pos.charOffset)
     }
 
@@ -746,7 +1097,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
 
     private fun startListening(from: ReadingPosition?) {
         val p = bookView.paginator ?: return
-        val pos = from ?: p.positionOf(bookView.currentPage)
+        val pos = from ?: p.positionOf(currentPage())
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -759,25 +1110,28 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
 
     private fun onSpeechSentence(ch: Int, s: Int, e: Int) {
         if (ch < 0) {
-            bookView.speakRange = null
+            setSpeakRange(null)
             updatePlayer()
             return
         }
-        bookView.speakRange = Triple(ch, s, e)
+        setSpeakRange(Triple(ch, s, e))
         markActivity()
+        // En modo continuo la vista se desplaza sola hasta la frase
+        if (scrollMode) return
         val p = bookView.paginator ?: return
         val target = p.pageFor(ReadingPosition(ch, s))
-        val step = if (bookView.spread) 2 else 1
-        val cur = bookView.currentPage
+        val step = if (isSpread()) 2 else 1
+        val cur = currentPage()
         when {
             target in cur until cur + step -> {}
-            target in cur + step until cur + 2 * step -> bookView.turn(true)
-            else -> bookView.goTo(target)
+            target in cur + step until cur + 2 * step -> turnPage(true)
+            else -> navigate(target)
         }
     }
 
     private fun updatePlayer() {
         playerToggle.setImageResource(if (readAloud.playing) R.drawable.ic_pause else R.drawable.ic_play)
+        flexPlay?.text = if (readAloud.playing) "❚❚ Pausa" else "▶ Escuchar"
         val r = readAloud.rate
         playerRate.text = if (r == r.toInt().toFloat()) "${r.toInt()}×" else "${r}×".replace('.', ',')
     }
@@ -800,6 +1154,10 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         colors = prefs.colorsFor(t)
         bookView.accentColor = accent()
         bookView.theme = colors
+        if (::scrollView.isInitialized) {
+            scrollView.accentColor = accent()
+            scrollView.theme = colors
+        }
         applyOverlayTheme()
         AppCompatDelegate.setDefaultNightMode(
             if (colors.isDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
@@ -818,6 +1176,8 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         updateTimerLabel()
         ruler.setColors(accent, t.isDark)
         notebookView?.setColors(t.paper, t.text, t.secondary, accent)
+        translationPanel?.setColors(t.text, t.secondary)
+        styleFlexPanel()
         playerRate.setTextColor(accent)
         playerRate.background = roundRect(ColorUtils.blendARGB(card, t.text, 0.08f), dp(14f))
         titleView.setTextColor(t.text)
@@ -888,6 +1248,9 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             },
             onRuler = { applyRuler() },
             onSpeedRead = { showSpeedReader() },
+            onScrollMode = { relayout() },
+            onHandsFree = { startHandsFree() },
+            onTranslatePage = { showTranslationSheet() },
         ).show()
     }
 
@@ -897,7 +1260,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         overlayVisible = show
         if (show) {
             selectionMenu.dismiss()
-            bookView.clearSelection()
+            clearSelections()
         }
         listOf(topBar, bottomBar).forEachIndexed { i, v ->
             v.animate().cancel()
@@ -928,7 +1291,8 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         list.adapter = sideAdapter
         sideTabs = SegmentedControl(this)
         findViewById<FrameLayout>(R.id.sideTabs).addView(sideTabs)
-        sideTabs.setOptions(listOf("Contenido", "Marcadores", "Notas", "Cuaderno"), 0)
+        sideAdapter.dragEnabled = true
+        sideTabs.setOptions(listOf("Índice", "Marcas", "Notas", "Cuaderno", "Traducir"), 0)
         sideTabs.onSelected = { refreshSide() }
         updatePanelVisibility()
     }
@@ -946,18 +1310,28 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     }
 
     private fun refreshSide() {
-        val notebookTab = sideTabs.selected == 3
+        val tab = sideTabs.selected
+        val extraTab = tab >= 3
         val box = findViewById<FrameLayout>(R.id.sideNotebook)
-        box.visibility = if (notebookTab) View.VISIBLE else View.GONE
-        findViewById<View>(R.id.sideList).visibility = if (notebookTab) View.GONE else View.VISIBLE
-        if (notebookTab) {
+        box.visibility = if (extraTab) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.sideList).visibility = if (extraTab) View.GONE else View.VISIBLE
+        if (extraTab) {
             sideStatus.visibility = View.GONE
-            if (notebookView == null) {
+            if (tab == 3 && notebookView == null) {
                 notebookView = NotebookView(this, entry.id, notes).also {
                     box.addView(it, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
                     it.setColors(colors.paper, colors.text, colors.secondary, accent())
                 }
             }
+            if (tab == 4 && translationPanel == null) {
+                translationPanel = TranslationPanel(this, lifecycleScope, prefs, book?.language ?: "").also {
+                    box.addView(it, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                    it.setColors(colors.text, colors.secondary)
+                }
+            }
+            notebookView?.visibility = if (tab == 3) View.VISIBLE else View.GONE
+            translationPanel?.visibility = if (tab == 4) View.VISIBLE else View.GONE
+            if (tab == 4) translationPanel?.showPage(currentPageText())
             return
         }
         notebookView?.flush()
@@ -966,6 +1340,9 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             sideStatus.text = msg
         }, onNavigate = {}, onChanged = {})
         sideAdapter.rows = rows
+        if (sideTabs.selected == 2 && notes.highlights.isNotEmpty()) {
+            sideStatus.text = "${sideStatus.text} Mantén pulsado uno para arrastrarlo a otra app."
+        }
     }
 
     // ---------------------------------------------------------------- contenido, marcadores y notas
@@ -979,9 +1356,9 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     ): List<SheetRow> {
         val b = book ?: return emptyList()
         val p = bookView.paginator ?: return emptyList()
-        val curChapter = p.pages.getOrNull(bookView.currentPage)?.chapter ?: 0
+        val curChapter = p.pages.getOrNull(currentPage())?.chapter ?: 0
         fun go(page: Int) {
-            bookView.goTo(page)
+            navigate(page)
             onNavigate()
             if (overlayVisible) setOverlay(false)
         }
@@ -1039,7 +1416,9 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
                             0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
                     val caption = b.chapterTitle(h.chapter) + if (h.note.isNotBlank()) " · Nota: ${h.note.trim()}" else ""
-                    rows += SheetRow(title, caption = caption, trailing = (page + 1).toString(), onLongClick = {
+                    val drag = "“${h.text.trim()}”" + (if (h.note.isNotBlank()) "\n\n${h.note.trim()}" else "") +
+                        "\n— ${entry.title}" + (if (entry.author.isNotEmpty()) ", ${entry.author}" else "")
+                    rows += SheetRow(title, caption = caption, trailing = (page + 1).toString(), dragText = drag, onLongClick = {
                         MaterialAlertDialogBuilder(this)
                             .setTitle("Subrayado")
                             .setItems(arrayOf(if (h.note.isBlank()) "Añadir nota" else "Editar nota", "Borrar")) { _, which ->
@@ -1053,7 +1432,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
                             }.show()
                     }) {
                         go(page)
-                        bookView.highlight = Triple(h.chapter, h.start, h.end)
+                        showHighlight(Triple(h.chapter, h.start, h.end))
                     }
                 }
                 rows
@@ -1178,8 +1557,8 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
                 sheet.adapter.rows = results.map { (ch, off, snip) ->
                     val page = p.pageFor(ReadingPosition(ch, off))
                     SheetRow(snip, caption = b.chapterTitle(ch), trailing = (page + 1).toString()) {
-                        bookView.goTo(page)
-                        bookView.highlight = Triple(ch, off, off + needle.length)
+                        navigate(page)
+                        showHighlight(Triple(ch, off, off + needle.length))
                         sheet.dismiss()
                         setOverlay(false)
                     }
@@ -1206,13 +1585,13 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (prefs.volumeKeys && !overlayVisible && !readAloud.playing) {
             when (keyCode) {
-                KeyEvent.KEYCODE_VOLUME_DOWN -> { bookView.turn(true); return true }
-                KeyEvent.KEYCODE_VOLUME_UP -> { bookView.turn(false); return true }
+                KeyEvent.KEYCODE_VOLUME_DOWN -> { turnPage(true); return true }
+                KeyEvent.KEYCODE_VOLUME_UP -> { turnPage(false); return true }
             }
         }
         when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_SPACE -> { bookView.turn(true); return true }
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_PAGE_UP -> { bookView.turn(false); return true }
+            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_SPACE -> { turnPage(true); return true }
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_PAGE_UP -> { turnPage(false); return true }
         }
         return super.onKeyDown(keyCode, event)
     }

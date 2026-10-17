@@ -37,6 +37,28 @@ Lector de EPUB para Android pensado para el Galaxy Z Fold (probado en diseño pa
   (presión, goma con el botón del lápiz, ignora la palma). Con el Fold abierto, en el panel lateral
   mientras lees en la otra mitad.
 - **Aviso de actualizaciones** dentro de la app: descarga e instala la versión nueva.
+- **Traducción en paralelo** (pestaña «Traducir» del panel lateral, o Ajustes › Traducción de la página):
+  la página traducida párrafo a párrafo sin conexión mientras lees el original.
+- **Vocabulario**: las palabras que defines o traduces se guardan con su frase y se repasan como tarjetas
+  (repaso espaciado). Más › Vocabulario.
+- **Voces y audio**: elige la voz (las de mayor calidad primero) y guarda un capítulo como audio M4A en
+  Música/EpubFold (botón ⋯ del reproductor).
+- **Pasar página sin tocar**: pasa la mano sobre el sensor de proximidad (mantenla para volver) o inclina el
+  teléfono. Funciona también en PDF y cómics.
+- **Modo continuo**: desplazamiento vertical en lugar de páginas (Ajustes › Modo de lectura).
+- **Modo Flex**: con el Fold medio plegado sobre la mesa, el libro arriba y los controles abajo.
+- **Al plegar o desplegar** se resalta un momento la línea por la que ibas.
+- **Arrastrar citas**: con el Fold abierto, arrastra un subrayado del panel lateral a Notas, Samsung Notes…
+- **Estanterías propias** (chips en la biblioteca; mantén pulsado un libro › Estanterías…), sincronizadas.
+- **Qué leer después**: siguiente de tus series y sugerencias de Open Library por temas.
+- **Carpeta de entrada**: importa sola los libros nuevos de una carpeta (al abrir y cada 6 horas).
+- **Exportar notas** a Obsidian (un .md por libro en tu bóveda), Readwise y Notion, con sincronización automática.
+- **Tarjetas para compartir**: un subrayado convertido en imagen con la portada («Tarjeta» al seleccionar).
+- **Buscar en todas tus notas**, subrayados y cuadernos a la vez.
+- **Recordatorio diario** con tu racha y lo que te falta para la meta.
+- **Tu año en lectura**: resumen tipo «Wrapped» (horas, libros, autor, mes, frase) para compartir.
+- **Clubes de lectura**: leed el mismo libro con amigos, con el progreso de cada uno y comentarios por capítulo
+  que se ocultan si aún no has llegado. Requiere cuenta; las reglas están en `firestore.rules`.
 - Abre EPUB, PDF y cómics desde el explorador de archivos o "Compartir".
 
 ## Descargar el APK

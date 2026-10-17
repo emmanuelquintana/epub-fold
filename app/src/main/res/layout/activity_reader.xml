@@ -69,11 +69,18 @@
             android:layout_height="match_parent"
             android:visibility="gone" />
 
-        <com.emmanuel.epubfold.BookView
-            android:id="@+id/book"
+        <!-- Libro: páginas (BookView) o desplazamiento continuo (se añade encima por código) -->
+        <FrameLayout
+            android:id="@+id/bookFrame"
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="1" />
+            android:layout_weight="1">
+
+            <com.emmanuel.epubfold.BookView
+                android:id="@+id/book"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+        </FrameLayout>
     </LinearLayout>
 
     <ProgressBar
@@ -311,6 +318,16 @@
             android:paddingHorizontal="8dp"
             android:paddingVertical="6dp"
             android:textSize="13sp" />
+
+        <ImageButton
+            android:id="@+id/playerMore"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Más opciones de voz"
+            android:padding="9dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_more" />
 
         <ImageButton
             android:id="@+id/playerClose"

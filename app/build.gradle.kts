@@ -96,6 +96,9 @@ dependencies {
     // Importar carpetas completas
     implementation("androidx.documentfile:documentfile:1.0.1")
 
+    // Carpeta de entrada revisada en segundo plano
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+
     // Cómics en CBR (RAR)
     implementation("com.github.junrar:junrar:7.5.5")
 }

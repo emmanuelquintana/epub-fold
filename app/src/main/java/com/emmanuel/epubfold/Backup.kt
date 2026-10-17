@@ -63,6 +63,7 @@ object Backup {
         put("updatedAt", b.updatedAt)
         put("lastOpened", b.lastOpened)
         put("annotations", Annotations(context, b.id).toJson())
+        put("tags", JSONArray(b.tags))
     }
 
     /** Aplica los datos de un libro (de copia o de la nube) si son más recientes. */
@@ -79,6 +80,11 @@ object Backup {
                     finishedAt = o.optLong("finishedAt"),
                     updatedAt = o.optLong("updatedAt"),
                     lastOpened = maxOf(it.lastOpened, o.optLong("lastOpened")),
+                    tags = if (o.has("tags")) when (val t = o.opt("tags")) {
+                        is JSONArray -> (0 until t.length()).map { i -> t.getString(i) }
+                        is String -> t.split('|').filter { s -> s.isNotBlank() }
+                        else -> it.tags
+                    } else it.tags,
                 )
             }
             changed = true

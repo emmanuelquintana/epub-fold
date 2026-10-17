@@ -17,11 +17,39 @@ class ReadingStats(context: Context) {
         load()
     }
 
-    fun addSeconds(seconds: Int) {
+    fun addSeconds(seconds: Int, bookKey: String? = null) {
         if (seconds <= 0) return
         val k = dayKey(Calendar.getInstance())
         days[k] = (days[k] ?: 0) + seconds
         save()
+        if (bookKey != null) {
+            val y = Calendar.getInstance().get(Calendar.YEAR)
+            val bk = "$y|$bookKey"
+            books[bk] = (books[bk] ?: 0) + seconds
+            saveBooks()
+        }
+    }
+
+    /** Segundos por año y libro: "2026|clave" -> segundos. */
+    val books: MutableMap<String, Int> by lazy {
+        HashMap<String, Int>().also { m ->
+            runCatching {
+                val o = JSONObject(booksFile.readText())
+                o.keys().forEach { m[it] = o.optInt(it) }
+            }
+        }
+    }
+    private val booksFile = File(context.filesDir, "stats_books.json")
+
+    private fun saveBooks() {
+        booksFile.writeText(JSONObject().apply { books.forEach { (k, v) -> put(k, v) } }.toString())
+    }
+
+    fun booksJson(): JSONObject = JSONObject().apply { books.forEach { (k, v) -> put(k, v) } }
+
+    fun mergeBooks(o: JSONObject) {
+        o.keys().forEach { k -> books[k] = maxOf(books[k] ?: 0, o.optInt(k)) }
+        saveBooks()
     }
 
     fun secondsOn(cal: Calendar): Int = days[dayKey(cal)] ?: 0

@@ -60,6 +60,12 @@ class OpdsActivity : AppCompatActivity() {
         val searchTemplate: String?,
     )
 
+    companion object {
+        /** Abrir directamente esta dirección (p. ej. una búsqueda en Gutenberg). */
+        const val EXTRA_URL = "url"
+        const val EXTRA_NAME = "name"
+    }
+
     private val presets = listOf(
         Catalog("Project Gutenberg", "https://www.gutenberg.org/ebooks.opds/"),
         Catalog("Feedbooks · dominio público", "https://catalog.feedbooks.com/catalog/public_domain.atom"),
@@ -156,6 +162,10 @@ class OpdsActivity : AppCompatActivity() {
             override fun handleOnBackPressed() = goBack()
         })
         showCatalogs()
+        intent.getStringExtra(EXTRA_URL)?.let { url ->
+            val c = Catalog(intent.getStringExtra(EXTRA_NAME) ?: "Catálogo", url)
+            open(c, url, push = false)
+        }
     }
 
     // ---------------------------------------------------------------- catálogos guardados

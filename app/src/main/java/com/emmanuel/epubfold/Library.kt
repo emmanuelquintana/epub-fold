@@ -31,6 +31,8 @@ data class BookEntry(
     val seriesIndex: Float = 0f,
     /** Ya se buscó portada en internet (para no repetir). */
     val coverLookedUp: Boolean = false,
+    /** Estanterías propias (etiquetas) además de Leyendo / Quiero leer / Terminados. */
+    val tags: List<String> = emptyList(),
 ) {
     /** Identificador estable entre dispositivos (mismo libro = mismo título y autor). */
     val key: String get() = bookKey(title, author)
@@ -192,6 +194,21 @@ class Library(private val context: Context) {
 
     fun markCoverLookedUp(id: String) = update(id) { it.copy(coverLookedUp = true) }
 
+    /** El siguiente libro de la misma serie que haya en la biblioteca (sin terminar). */
+    fun nextInSeries(entry: BookEntry): BookEntry? {
+        if (entry.series.isBlank()) return null
+        return load().filter {
+            it.id != entry.id && it.series.equals(entry.series, true) && it.seriesIndex > entry.seriesIndex &&
+                it.collection != Shelf.FINISHED
+        }.minByOrNull { it.seriesIndex }
+    }
+
+    /** Estanterías propias usadas en algún libro, por orden alfabético. */
+    fun allTags(): List<String> = load().flatMap { it.tags }.distinct().sortedBy { it.lowercase() }
+
+    fun setTags(id: String, tags: List<String>) =
+        update(id) { it.copy(tags = tags.map { t -> t.trim() }.filter { t -> t.isNotEmpty() }.distinct(), updatedAt = System.currentTimeMillis()) }
+
     fun setSeries(id: String, series: String, index: Float) =
         update(id) { it.copy(series = series.trim(), seriesIndex = index) }
 
@@ -250,6 +267,7 @@ class Library(private val context: Context) {
                     o.optString("shelf"), o.optLong("finishedAt"), o.optLong("updatedAt"),
                     BookFormat.of(o.optString("format")), o.optString("series"),
                     o.optDouble("seriesIndex", 0.0).toFloat(), o.optBoolean("coverLookedUp"),
+                    o.optJSONArray("tags")?.let { t -> (0 until t.length()).map { t.getString(it) } } ?: emptyList(),
                 )
             }
         } catch (e: Exception) {
@@ -269,6 +287,7 @@ class Library(private val context: Context) {
                 put("shelf", it.shelf); put("finishedAt", it.finishedAt); put("updatedAt", it.updatedAt)
                 put("format", it.format.name); put("series", it.series)
                 put("seriesIndex", it.seriesIndex.toDouble()); put("coverLookedUp", it.coverLookedUp)
+                put("tags", JSONArray(it.tags))
             })
         }
         val tmp = File(indexFile.parentFile, "library.json.tmp")
@@ -361,6 +380,22 @@ class ReaderPrefs(context: Context) {
         get() = sp.getInt("libraryFilter", 0)
         set(v) = sp.edit().putInt("libraryFilter", v).apply()
 
+    /** Estantería mostrada: "all", "reading", "want", "finished" o "tag:Nombre". */
+    var libraryShelf: String
+        get() = sp.getString("libraryShelf", null) ?: when (libraryFilter) {
+            1 -> "reading"; 2 -> "want"; 3 -> "finished"; else -> "all"
+        }
+        set(v) = sp.edit().putString("libraryShelf", v).apply()
+
+    var reminderOn: Boolean
+        get() = sp.getBoolean("reminderOn", false)
+        set(v) = sp.edit().putBoolean("reminderOn", v).apply()
+
+    /** Hora del recordatorio en minutos desde medianoche. */
+    var reminderMin: Int
+        get() = sp.getInt("reminderMin", 21 * 60)
+        set(v) = sp.edit().putInt("reminderMin", v).apply()
+
     var lastSync: Long
         get() = sp.getLong("lastSync", 0L)
         set(v) = sp.edit().putLong("lastSync", v).apply()
@@ -431,6 +466,20 @@ class ReaderPrefs(context: Context) {
     var speedWpm: Int
         get() = sp.getInt("speedWpm", 300)
         set(v) = sp.edit().putInt("speedWpm", v).apply()
+
+    /** Desplazamiento continuo en lugar de páginas. */
+    var scrollMode: Boolean
+        get() = sp.getBoolean("scrollMode", false)
+        set(v) = sp.edit().putBoolean("scrollMode", v).apply()
+
+    var handsFree: HandsFreeMode
+        get() = enumPref("handsFree", HandsFreeMode.OFF)
+        set(v) = sp.edit().putString("handsFree", v.name).apply()
+
+    /** Voz elegida para leer en voz alta (null = la del sistema). */
+    var ttsVoice: String?
+        get() = sp.getString("ttsVoice", null)
+        set(v) = sp.edit().putString("ttsVoice", v).apply()
 
     /** Regla de lectura visible. */
     var ruler: Boolean

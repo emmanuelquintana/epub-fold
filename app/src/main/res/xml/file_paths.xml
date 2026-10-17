@@ -2,4 +2,6 @@
 <paths>
     <!-- APK de actualización descargado por Updater -->
     <external-files-path name="updates" path="Download/" />
+    <!-- Tarjetas e imágenes para compartir -->
+    <cache-path name="shared" path="shared/" />
 </paths>
