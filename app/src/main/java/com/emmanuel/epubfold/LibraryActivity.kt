@@ -42,8 +42,56 @@ class LibraryActivity : AppCompatActivity() {
     private lateinit var list: RecyclerView
     private lateinit var progress: CircularProgressIndicator
 
-    private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { importBook(it, open = true) }
+    private val picker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        when (uris.size) {
+            0 -> {}
+            1 -> importBook(uris[0], open = true)
+            else -> importMany(uris.map { u -> { library.import(u) } })
+        }
+    }
+
+    private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+        tree ?: return@registerForActivityResult
+        progress.visibility = View.VISIBLE
+        lifecycleScope.launch {
+            val files = withContext(Dispatchers.IO) {
+                val root = androidx.documentfile.provider.DocumentFile.fromTreeUri(this@LibraryActivity, tree)
+                val out = ArrayList<Uri>()
+                fun walk(d: androidx.documentfile.provider.DocumentFile, depth: Int) {
+                    if (depth > 6) return
+                    d.listFiles().forEach { f ->
+                        val n = f.name?.lowercase() ?: ""
+                        if (f.isDirectory) walk(f, depth + 1)
+                        else if (BOOK_EXT.any { n.endsWith(".$it") }) out += f.uri
+                    }
+                }
+                root?.let { walk(it, 0) }
+                out
+            }
+            progress.visibility = View.GONE
+            if (files.isEmpty()) {
+                Toast.makeText(this@LibraryActivity, "No hay EPUB, PDF ni cómics en esa carpeta", Toast.LENGTH_LONG).show()
+            } else {
+                importMany(files.map { u -> { library.import(u) } })
+            }
+        }
+    }
+
+    private var dailySkip = 0
+    /** Subrayados de todos los libros (se cargan en segundo plano al volver a la biblioteca). */
+    private var memories: List<Memory> = emptyList()
+
+    companion object {
+        val BOOK_EXT = listOf("epub", "pdf", "cbz", "cbr")
+        val BOOK_MIME = arrayOf(
+            "application/epub+zip", "application/pdf", "application/vnd.comicbook+zip",
+            "application/vnd.comicbook-rar", "application/x-cbz", "application/x-cbr",
+            "application/zip", "application/x-rar-compressed", "application/octet-stream", "*/*",
+        )
+
+        fun readerIntent(context: android.content.Context, entry: BookEntry): Intent =
+            Intent(context, if (entry.format.isImage) ImageReaderActivity::class.java else ReaderActivity::class.java)
+                .putExtra(ReaderActivity.EXTRA_ID, entry.id)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -102,7 +150,7 @@ class LibraryActivity : AppCompatActivity() {
             }
         })
 
-        findViewById<View>(R.id.add).setOnClickListener { pickBook() }
+        findViewById<View>(R.id.add).setOnClickListener { showAddMenu(it) }
         findViewById<View>(R.id.stats).setOnClickListener { startActivity(Intent(this, StatsActivity::class.java)) }
         findViewById<View>(R.id.account).setOnClickListener { startActivity(Intent(this, AccountActivity::class.java)) }
         handleIntent(intent)
@@ -111,7 +159,60 @@ class LibraryActivity : AppCompatActivity() {
     private fun withAlpha(c: Int, a: Int) = (c and 0x00FFFFFF) or (a shl 24)
 
     private fun pickBook() {
-        picker.launch(arrayOf("application/epub+zip", "application/octet-stream", "*/*"))
+        picker.launch(BOOK_MIME)
+    }
+
+    private fun showAddMenu(anchor: View) {
+        PopupMenu(this, anchor).apply {
+            menu.add(0, 1, 0, "Archivos (EPUB, PDF, CBZ, CBR)…")
+            menu.add(0, 2, 1, "Carpeta completa…")
+            menu.add(0, 3, 2, "Catálogos en línea (OPDS)…")
+            setOnMenuItemClickListener {
+                when (it.itemId) {
+                    1 -> pickBook()
+                    2 -> folderPicker.launch(null)
+                    3 -> startActivity(Intent(this@LibraryActivity, OpdsActivity::class.java))
+                }
+                true
+            }
+            show()
+        }
+    }
+
+    /** Importa varios libros seguidos mostrando el avance. */
+    private fun importMany(jobs: List<() -> BookEntry>) {
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Importando libros")
+            .setMessage("0 de ${jobs.size}")
+            .setCancelable(false)
+            .show()
+        lifecycleScope.launch {
+            var ok = 0
+            val failed = ArrayList<String>()
+            jobs.forEachIndexed { i, job ->
+                val r = withContext(Dispatchers.IO) { runCatching { job() } }
+                r.onSuccess { ok++ }.onFailure { failed += (it.message ?: "error") }
+                dialog.setMessage("${i + 1} de ${jobs.size}")
+                if (i % 5 == 4) refresh()
+            }
+            dialog.dismiss()
+            refresh()
+            autoCovers()
+            val msg = "$ok libros añadidos" + if (failed.isNotEmpty()) " · ${failed.size} no se pudieron abrir" else ""
+            Toast.makeText(this@LibraryActivity, msg, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Busca en Open Library portadas para los libros que no tienen. */
+    private fun autoCovers() {
+        if (library.all().none { it.coverPath == null && !it.coverLookedUp }) return
+        lifecycleScope.launch {
+            val n = withContext(Dispatchers.IO) { runCatching { Metadata.fillMissingCovers(this@LibraryActivity) }.getOrDefault(0) }
+            if (n > 0) {
+                coverCache.evictAll()
+                refresh()
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -128,6 +229,13 @@ class LibraryActivity : AppCompatActivity() {
         )
         refresh()
         autoSync()
+        autoCovers()
+        Updater.check(this, manual = false)
+        Widgets.updateAll(this)
+        lifecycleScope.launch {
+            memories = withContext(Dispatchers.IO) { runCatching { Review.all(this@LibraryActivity) }.getOrDefault(emptyList()) }
+            adapter.notifyItemChanged(0, "header")
+        }
     }
 
     /** Sincroniza en segundo plano como mucho cada 10 minutos si hay sesión. */
@@ -168,6 +276,10 @@ class LibraryActivity : AppCompatActivity() {
             LibrarySort.RECENT -> all
             LibrarySort.TITLE -> all.sortedBy { it.title.lowercase() }
             LibrarySort.AUTHOR -> all.sortedBy { it.author.lowercase() }
+            // Las sagas juntas y en orden; después los libros sueltos por título
+            LibrarySort.SERIES -> all.sortedWith(
+                compareBy<BookEntry>({ it.series.isEmpty() }, { it.series.lowercase() }, { it.seriesIndex }, { it.title.lowercase() })
+            )
         }
         val q = query.trim().lowercase()
         val filtered = sorted.filter { b ->
@@ -177,7 +289,8 @@ class LibraryActivity : AppCompatActivity() {
                 3 -> b.collection == Shelf.FINISHED
                 else -> true
             }
-            shelfOk && (q.isEmpty() || b.title.lowercase().contains(q) || b.author.lowercase().contains(q))
+            shelfOk && (q.isEmpty() || b.title.lowercase().contains(q) || b.author.lowercase().contains(q) ||
+                b.series.lowercase().contains(q))
         }
         val hero = if (q.isEmpty() && prefs.libraryFilter == 0)
             all.firstOrNull { it.collection == Shelf.READING } else null
@@ -192,6 +305,7 @@ class LibraryActivity : AppCompatActivity() {
             result.onSuccess {
                 refresh()
                 CloudSync.pullOne(this@LibraryActivity, it.id) { refresh() }
+                autoCovers()
                 if (open) openBook(it)
             }.onFailure {
                 Toast.makeText(this@LibraryActivity, "No se pudo abrir el libro: ${it.message}", Toast.LENGTH_LONG).show()
@@ -200,7 +314,72 @@ class LibraryActivity : AppCompatActivity() {
     }
 
     private fun openBook(entry: BookEntry) {
-        startActivity(Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_ID, entry.id))
+        startActivity(readerIntent(this, entry))
+    }
+
+    private fun openMemory(m: Memory) {
+        startActivity(
+            readerIntent(this, m.book)
+                .putExtra(ReaderActivity.EXTRA_CHAPTER, m.highlight.chapter)
+                .putExtra(ReaderActivity.EXTRA_START, m.highlight.start)
+                .putExtra(ReaderActivity.EXTRA_END, m.highlight.end)
+        )
+    }
+
+    /** Todos los subrayados de todos los libros, del más reciente al más antiguo. */
+    private fun showAllMemories() {
+        val all = memories.sortedByDescending { it.highlight.created }
+        val sheet = ListSheet(this, "Tus subrayados")
+        sheet.setStatus(if (all.isEmpty()) "Aún no has subrayado nada." else "${all.size} subrayados en ${all.map { it.book.id }.distinct().size} libros")
+        sheet.adapter.rows = all.map { m ->
+            val note = if (m.highlight.note.isNotBlank()) " · Nota: ${m.highlight.note.trim()}" else ""
+            SheetRow("“${m.highlight.text.trim().take(280)}”", caption = m.book.title + note) {
+                sheet.dismiss()
+                openMemory(m)
+            }
+        }
+        sheet.show()
+    }
+
+    private fun editSeries(entry: BookEntry) {
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(dpi(20), dpi(8), dpi(20), 0)
+        }
+        val name = android.widget.EditText(this).apply { hint = "Nombre de la serie"; setText(entry.series); setSingleLine() }
+        val number = android.widget.EditText(this).apply {
+            hint = "Número (p. ej. 2)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            if (entry.seriesIndex > 0f) setText(Formats.fmtIndex(entry.seriesIndex))
+            setSingleLine()
+        }
+        box.addView(name)
+        box.addView(number)
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Serie")
+            .setView(box)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Guardar") { _, _ ->
+                library.setSeries(entry.id, name.text.toString(), number.text.toString().replace(',', '.').toFloatOrNull() ?: 0f)
+                refresh()
+            }
+            .show()
+    }
+
+    private fun findCover(entry: BookEntry) {
+        Toast.makeText(this, "Buscando portada…", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { Metadata.findCover(entry.title, entry.author)?.let { library.setCover(entry.id, it) } ?: false }
+                    .getOrDefault(false)
+            }
+            if (ok) {
+                coverCache.evictAll()
+                refresh()
+            } else {
+                Toast.makeText(this@LibraryActivity, "No se encontró portada en Open Library", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun showBookMenu(anchor: View, entry: BookEntry) {
@@ -211,7 +390,9 @@ class LibraryActivity : AppCompatActivity() {
             else if (entry.collection != Shelf.FINISHED) menu.add(0, 5, 1, "Añadir a «Quiero leer»")
             if (entry.collection != Shelf.FINISHED) menu.add(0, 6, 2, "Marcar como terminado")
             menu.add(0, 2, 3, "Marcar como no leído")
-            menu.add(0, 3, 4, "Quitar de la biblioteca")
+            menu.add(0, 7, 4, if (entry.series.isEmpty()) "Añadir a una serie…" else "Serie: ${entry.series}…")
+            menu.add(0, 8, 5, "Buscar portada en internet")
+            menu.add(0, 3, 6, "Quitar de la biblioteca")
             setOnMenuItemClickListener {
                 when (it.itemId) {
                     1 -> openBook(entry)
@@ -227,6 +408,8 @@ class LibraryActivity : AppCompatActivity() {
                     4 -> { library.setShelf(entry.id, ""); refresh() }
                     5 -> { library.setShelf(entry.id, "want"); refresh() }
                     6 -> { library.markFinished(entry.id); refresh() }
+                    7 -> editSeries(entry)
+                    8 -> findCover(entry)
                 }
                 CloudSync.schedulePush(this@LibraryActivity, entry.id)
                 true
@@ -325,6 +508,10 @@ class LibraryActivity : AppCompatActivity() {
         val filterBox: FrameLayout = v.findViewById(R.id.filterBox)
         val filter = SegmentedControl(v.context)
         val sectionTitle: TextView = v.findViewById(R.id.sectionTitle)
+        val daily: View = v.findViewById(R.id.daily)
+        val dailyQuote: TextView = v.findViewById(R.id.dailyQuote)
+        val dailyNote: TextView = v.findViewById(R.id.dailyNote)
+        val dailySource: TextView = v.findViewById(R.id.dailySource)
 
         init {
             filterBox.addView(filter)
@@ -352,6 +539,25 @@ class LibraryActivity : AppCompatActivity() {
                 refresh()
             }
             v.findViewById<View>(R.id.emptyAdd).setOnClickListener { pickBook() }
+            v.findViewById<View>(R.id.dailyNext).setOnClickListener {
+                dailySkip++
+                bindDaily()
+            }
+            v.findViewById<View>(R.id.dailyAll).setOnClickListener { showAllMemories() }
+        }
+
+        fun bindDaily() {
+            val m = if (query.isEmpty() && prefs.libraryFilter == 0) Review.pick(memories, dailySkip) else null
+            if (m == null) {
+                daily.visibility = View.GONE
+                return
+            }
+            daily.visibility = View.VISIBLE
+            dailyQuote.text = "“${m.highlight.text.trim()}”"
+            dailyNote.visibility = if (m.highlight.note.isBlank()) View.GONE else View.VISIBLE
+            dailyNote.text = "Tu nota: ${m.highlight.note.trim()}"
+            dailySource.text = m.book.title + if (m.book.author.isNotEmpty()) " · ${m.book.author}" else ""
+            daily.setOnClickListener { openMemory(m) }
         }
 
         fun bind(books: List<BookEntry>, hero: BookEntry?) {
@@ -385,6 +591,7 @@ class LibraryActivity : AppCompatActivity() {
                 heroBox.setOnClickListener { openBook(hero) }
                 heroContinue.setOnClickListener { openBook(hero) }
             }
+            bindDaily()
         }
     }
 
@@ -398,17 +605,19 @@ class LibraryActivity : AppCompatActivity() {
         fun bind(e: BookEntry) {
             title.text = e.title
             val pct = (e.progress * 100).toInt()
+            val seriesTag = if (e.series.isNotEmpty())
+                (if (e.seriesIndex > 0f) "#${Formats.fmtIndex(e.seriesIndex)} " else "") + e.series + " · " else ""
             when {
                 e.progress <= 0f -> {
-                    status.text = "NUEVO"
+                    status.text = seriesTag + "NUEVO"
                     status.setTextColor(color(R.color.accent))
                 }
                 e.progress >= 0.999f -> {
-                    status.text = "Terminado"
+                    status.text = seriesTag + "Terminado"
                     status.setTextColor(color(R.color.label_secondary))
                 }
                 else -> {
-                    status.text = "$pct %"
+                    status.text = "$seriesTag$pct %"
                     status.setTextColor(color(R.color.label_secondary))
                 }
             }

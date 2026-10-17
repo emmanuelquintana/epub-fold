@@ -113,6 +113,8 @@ class SettingsSheet(
     private val onBrightness: () -> Unit,
     private val onKeepScreenOn: () -> Unit,
     private val onAutoTheme: () -> Unit,
+    private val onRuler: (() -> Unit)? = null,
+    private val onSpeedRead: (() -> Unit)? = null,
 ) {
     private val ctx = activity
     private val accent = ctx.color(R.color.accent)
@@ -309,6 +311,28 @@ class SettingsSheet(
         col.addView(fontsScroll)
         refreshFonts()
 
+        // --- Lectura enfocada
+        if (onRuler != null || onSpeedRead != null) {
+            spacer(col, 18)
+            col.addView(caption("Lectura enfocada"))
+            val focus = group(col)
+            onRuler?.let { cb ->
+                focus.addView(switchRow("Regla de lectura (resalta unas líneas)", prefs.ruler) { prefs.ruler = it; cb() })
+            }
+            onSpeedRead?.let { cb ->
+                if (onRuler != null) focus.addView(hairline(ctx, ctx.dpi(16)))
+                focus.addView(TextView(ctx).apply {
+                    text = "Lectura rápida palabra a palabra…"
+                    setTextAppearance(R.style.Text_Body)
+                    setTextColor(accent)
+                    minimumHeight = ctx.dpi(50)
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(ctx.dpi(16), 0, ctx.dpi(16), 0)
+                    setOnClickListener { dialogRef?.dismiss(); cb() }
+                })
+            }
+        }
+
         // --- Personalizar
         spacer(col, 18)
         col.addView(caption("Personalizar"))
@@ -345,8 +369,11 @@ class SettingsSheet(
         dialog.setContentView(scroll)
         dialog.behavior.state = BottomSheetBehavior.STATE_EXPANDED
         dialog.behavior.skipCollapsed = true
+        dialogRef = dialog
         dialog.show()
     }
+
+    private var dialogRef: BottomSheetDialog? = null
 
     // ---------------------------------------------------------------- piezas
 

@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.CoroutineScope
@@ -44,12 +45,40 @@ object CloudSync {
         FirebaseAuth.getInstance().createUserWithEmailAndPassword(email.trim(), password).await()
     }
 
+    /**
+     * ID de cliente web (OAuth) que el plugin de google-services genera a partir de
+     * google-services.json. Se busca por nombre para compilar también sin Firebase.
+     */
+    fun webClientId(context: Context): String? {
+        val id = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+        return if (id != 0) context.getString(id) else null
+    }
+
+    /** Inicia sesión con una cuenta de Google (token obtenido con Credential Manager). */
+    suspend fun signInWithGoogle(context: android.app.Activity) {
+        val clientId = webClientId(context) ?: throw IllegalStateException("Google no está configurado en Firebase")
+        val option = com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption.Builder(clientId).build()
+        val request = androidx.credentials.GetCredentialRequest.Builder().addCredentialOption(option).build()
+        val result = androidx.credentials.CredentialManager.create(context).getCredential(context, request)
+        val cred = result.credential
+        if (cred !is androidx.credentials.CustomCredential ||
+            cred.type != com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+        ) throw IllegalStateException("Respuesta inesperada de Google")
+        val token = com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.createFrom(cred.data).idToken
+        FirebaseAuth.getInstance().signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
+    }
+
     suspend fun resetPassword(email: String) {
         FirebaseAuth.getInstance().sendPasswordResetEmail(email.trim()).await()
     }
 
-    fun signOut() {
+    suspend fun signOut(context: Context) {
         FirebaseAuth.getInstance().signOut()
+        // Olvida la cuenta de Google elegida para que la próxima vez se pueda escoger otra
+        runCatching {
+            androidx.credentials.CredentialManager.create(context)
+                .clearCredentialState(androidx.credentials.ClearCredentialStateRequest())
+        }
     }
 
     private fun userDoc(uid: String) = FirebaseFirestore.getInstance().collection("users").document(uid)

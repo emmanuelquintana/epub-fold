@@ -40,6 +40,13 @@ class ReadAloud(
         private set
     private var lastUtterance = ""
     private var session = 0
+    /** Fin de la frase que se está leyendo (para saltar a la siguiente). */
+    private var sentenceEnd = 0
+
+    /** Temporizador "al final del capítulo": se detiene al terminar el capítulo actual. */
+    var stopAtChapterEnd = false
+    /** Se llama cuando el temporizador de fin de capítulo detiene la lectura. */
+    var onChapterEndStop: (() -> Unit)? = null
 
     fun setLanguage(tag: String) {
         if (tag.isNotEmpty()) language = Locale.forLanguageTag(tag)
@@ -90,6 +97,11 @@ class ReadAloud(
     fun stop() {
         pause()
         onSentence(-1, 0, 0)
+    }
+
+    /** Salta a la frase siguiente. */
+    fun skipSentence(context: Context) {
+        if (sentenceEnd > offset) play(context, chapter, sentenceEnd)
     }
 
     fun shutdown() {
@@ -167,6 +179,7 @@ class ReadAloud(
                 if (!playing) return@post
                 chapter = p[1].toInt()
                 offset = p[2].toInt()
+                sentenceEnd = p[3].toInt()
                 onSentence(chapter, offset, p[3].toInt())
             }
         }
@@ -174,8 +187,19 @@ class ReadAloud(
         override fun onDone(utteranceId: String) {
             val p = utteranceId.split(':')
             if (p.size < 5 || p[0].toInt() != session || p[4] != "1") return
-            // Fin del capítulo: seguimos con el siguiente
-            main.post { if (playing) speakFrom(p[1].toInt() + 1, 0) }
+            // Fin del capítulo: seguimos con el siguiente (salvo temporizador de fin de capítulo)
+            main.post {
+                if (!playing) return@post
+                if (stopAtChapterEnd) {
+                    stopAtChapterEnd = false
+                    chapter = p[1].toInt() + 1
+                    offset = 0
+                    pause()
+                    onChapterEndStop?.invoke()
+                } else {
+                    speakFrom(p[1].toInt() + 1, 0)
+                }
+            }
         }
 
         @Deprecated("Deprecated in Java")

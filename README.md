@@ -18,8 +18,26 @@ Lector de EPUB para Android pensado para el Galaxy Z Fold (probado en diseño pa
 - **Tema automático** según el sistema o por horario; **textura de papel**, tema **Pergamino** y tema **Personal** con tus colores.
 - **Fuentes** Literata, Atkinson Hyperlegible y OpenDyslexic (licencia OFL, ver `licenses/`).
 - **Colecciones** (Leyendo, Quiero leer, Terminados) y búsqueda en la biblioteca.
-- **Copia de seguridad** (ZIP con libros o JSON sólo con progreso) y **cuenta en la nube** con Firebase.
-- Abre EPUB desde el explorador de archivos o "Compartir".
+- **Copia de seguridad** (ZIP con libros o JSON sólo con progreso) y **cuenta en la nube** con Firebase
+  (email y contraseña o **cuenta de Google**).
+- **PDF y cómics (CBZ/CBR)**: lector de páginas con zoom (pellizcar o doble toque), doble página con el Fold
+  abierto (portada sola) y modo **manga** de derecha a izquierda. Los CBR se convierten a CBZ al importarlos.
+- **Importación masiva**: varios archivos a la vez, una **carpeta completa** o **catálogos OPDS**
+  (Project Gutenberg, Feedbooks o tu servidor de Calibre/Kavita/Komga, con usuario y contraseña).
+- **Series** leídas del EPUB (Calibre o EPUB3) o de ComicInfo.xml, editables, con orden «Serie»;
+  **portadas automáticas** desde Open Library para los libros que no traen una.
+- **Recuerdo del día**: un subrayado de tus libros distinto cada día en la biblioteca, lista de todos tus
+  subrayados y **widget** para la pantalla de inicio.
+- **Widget «Seguir leyendo»** con portada y progreso (también en la pantalla exterior del Fold).
+- **Lectura enfocada**: **lectura rápida** palabra a palabra (150–900 ppm) y **regla de lectura** que resalta
+  unas líneas (Ajustes → Lectura enfocada).
+- **Voz alta mejorada**: temporizador (5 min a 1 h o fin del capítulo) y controles en la notificación,
+  la pantalla de bloqueo y los auriculares; sigue leyendo con la pantalla apagada.
+- **Cuaderno del libro**: notas largas (se sincronizan) y hoja para escribir a mano con el **S Pen**
+  (presión, goma con el botón del lápiz, ignora la palma). Con el Fold abierto, en el panel lateral
+  mientras lees en la otra mitad.
+- **Aviso de actualizaciones** dentro de la app: descarga e instala la versión nueva.
+- Abre EPUB, PDF y cómics desde el explorador de archivos o "Compartir".
 
 ## Descargar el APK
 
@@ -39,6 +57,14 @@ Requiere el Android SDK (API 35) y JDK 17.
 Sin configuración, el APK se firma con una clave de depuración generada en cada build (para actualizar
 puede que tengas que desinstalar la versión anterior). Para firmar siempre con la misma clave, añade en
 los *secrets* del repositorio: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
+Registra además su SHA-1 en Firebase (Configuración del proyecto → tu app Android) para que funcione
+«Continuar con Google».
+
+### Canal de actualizaciones
+
+Si existe el secret `RELEASES_DEPLOY_KEY` (clave SSH con escritura en el repo público
+`emmanuelquintana/epub-fold-releases`), cada build publica allí `EpubFold.apk` y `latest.json`
+(un único commit que se reemplaza). La app lo consulta cada 6 horas y desde **Cuenta → Buscar actualizaciones**.
 
 ## Activar cuentas en la nube (Firebase, plan gratuito)
 

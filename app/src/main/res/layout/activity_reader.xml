@@ -53,6 +53,14 @@
                 android:layout_weight="1"
                 android:clipToPadding="false"
                 android:paddingBottom="24dp" />
+
+            <!-- Cuaderno del libro (texto y S Pen) -->
+            <FrameLayout
+                android:id="@+id/sideNotebook"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:visibility="gone" />
         </LinearLayout>
 
         <View
@@ -290,6 +298,19 @@
             android:paddingVertical="6dp"
             android:text="1×"
             android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/playerTimer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
+            android:contentDescription="Temporizador"
+            android:drawablePadding="4dp"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="6dp"
+            android:textSize="13sp" />
 
         <ImageButton
             android:id="@+id/playerClose"

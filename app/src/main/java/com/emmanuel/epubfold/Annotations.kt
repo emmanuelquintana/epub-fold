@@ -35,6 +35,10 @@ class Annotations(context: Context, bookId: String) {
     var updatedAt: Long = 0L
         private set
 
+    /** Cuaderno libre del libro (notas largas). */
+    var notebook: String = ""
+        private set
+
     init {
         load()
     }
@@ -83,7 +87,13 @@ class Annotations(context: Context, bookId: String) {
         save()
     }
 
+    fun setNotebook(text: String) {
+        notebook = text
+        save()
+    }
+
     fun clear() {
+        notebook = ""
         bookmarks.clear()
         highlights.clear()
         file.delete()
@@ -109,6 +119,9 @@ class Annotations(context: Context, bookId: String) {
             sb.append("\n— ").append(HIGHLIGHT_NAMES.getOrElse(h.color) { "" }).append(" · ")
                 .append(DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(h.created))).append("\n\n")
         }
+        if (notebook.isNotBlank()) {
+            sb.append("\n## Cuaderno\n\n").append(notebook.trim()).append('\n')
+        }
         if (bookmarks.isNotEmpty()) {
             sb.append("\n## Marcadores\n\n")
             bookmarks.forEach { sb.append("- ").append(chapterTitle(it.chapter)).append(": ").append(it.snippet).append('\n') }
@@ -120,6 +133,7 @@ class Annotations(context: Context, bookId: String) {
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("updatedAt", updatedAt)
+        if (notebook.isNotEmpty()) put("notebook", notebook)
         put("bookmarks", JSONArray().apply {
             bookmarks.forEach {
                 put(JSONObject().put("chapter", it.chapter).put("offset", it.charOffset)
@@ -145,6 +159,7 @@ class Annotations(context: Context, bookId: String) {
         bookmarks.clear()
         highlights.clear()
         updatedAt = o.optLong("updatedAt")
+        notebook = o.optString("notebook")
         o.optJSONArray("bookmarks")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val b = arr.getJSONObject(i)

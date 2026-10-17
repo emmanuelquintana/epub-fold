@@ -25,6 +25,11 @@ class EpubBook(file: File) : Closeable {
         private set
     var coverPath: String? = null
         private set
+    /** Serie (calibre:series o belongs-to-collection de EPUB3) y número dentro de ella. */
+    var series: String = ""
+        private set
+    var seriesIndex: Float = 0f
+        private set
 
     /** Rutas completas (dentro del zip) de los documentos del spine, en orden. */
     val spine = ArrayList<String>()
@@ -82,7 +87,19 @@ class EpubBook(file: File) : Closeable {
                     val name = parser.name.substringAfter(':').lowercase()
                     when (name) {
                         "title", "creator", "language" -> textTarget = name
-                        "meta" -> if (parser.attr("name") == "cover") coverId = parser.attr("content")
+                        "meta" -> {
+                            val metaName = parser.attr("name")
+                            when {
+                                metaName == "cover" -> coverId = parser.attr("content")
+                                metaName == "calibre:series" -> series = parser.attr("content")?.trim().orEmpty()
+                                metaName == "calibre:series_index" ->
+                                    seriesIndex = parser.attr("content")?.toFloatOrNull() ?: seriesIndex
+                                parser.attr("property") == "belongs-to-collection" && series.isEmpty() ->
+                                    textTarget = "collection"
+                                parser.attr("property") == "group-position" && seriesIndex == 0f ->
+                                    textTarget = "position"
+                            }
+                        }
                         "item" -> {
                             val id = parser.attr("id") ?: ""
                             val href = parser.attr("href") ?: ""
@@ -103,6 +120,8 @@ class EpubBook(file: File) : Closeable {
                         "title" -> if (!titleSet) { title = t; titleSet = true }
                         "creator" -> if (author.isEmpty()) author = t
                         "language" -> if (language.isEmpty()) language = t
+                        "collection" -> series = t
+                        "position" -> seriesIndex = t.toFloatOrNull() ?: 0f
                     }
                 }
                 XmlPullParser.END_TAG -> textTarget = null

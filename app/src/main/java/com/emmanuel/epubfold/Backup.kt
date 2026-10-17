@@ -28,7 +28,7 @@ object Backup {
             put("books", JSONArray().apply {
                 books.forEach { b ->
                     put(bookJson(context, b).apply {
-                        if (includeBooks) put("file", "books/${b.key}.epub")
+                        if (includeBooks) put("file", "books/${b.key}.${b.format.ext}")
                     })
                 }
             })
@@ -42,7 +42,7 @@ object Backup {
                 books.forEach { b ->
                     val f = File(b.path)
                     if (f.exists()) {
-                        zip.putNextEntry(ZipEntry("books/${b.key}.epub"))
+                        zip.putNextEntry(ZipEntry("books/${b.key}.${b.format.ext}"))
                         f.inputStream().use { it.copyTo(zip) }
                         zip.closeEntry()
                     }
@@ -111,7 +111,9 @@ object Backup {
                     val name = e.name
                     if (name == "backup.json") {
                         jsonText = zip.readBytes().toString(Charsets.UTF_8)
-                    } else if (name.startsWith("books/") && name.endsWith(".epub") && !name.contains("..")) {
+                    } else if (name.startsWith("books/") && !name.contains("..") &&
+                        BookFormat.entries.any { name.endsWith(".${it.ext}") }
+                    ) {
                         File(tmp, name.substringAfterLast('/')).outputStream().use { zip.copyTo(it) }
                     }
                     zip.closeEntry()
@@ -131,9 +133,10 @@ object Backup {
             val key = o.optString("key")
             var local = library.findByKey(key)
             if (local == null) {
-                val f = File(tmp, "$key.epub")
-                if (f.exists()) {
-                    local = runCatching { f.inputStream().use { library.importStream(it) } }.getOrNull()
+                val f = BookFormat.entries.map { File(tmp, "$key.${it.ext}") }.firstOrNull { it.exists() }
+                if (f != null) {
+                    val name = o.optString("title") + "." + f.extension
+                    local = runCatching { f.inputStream().use { library.importStream(it, name) } }.getOrNull()
                     if (local != null) added++
                 }
             }

@@ -132,6 +132,13 @@ class AccountActivity : AppCompatActivity() {
             setTextAppearance(R.style.Text_Footnote)
             setPadding(dpi(16), dpi(8), dpi(16), 0)
         })
+
+        spacer(24)
+        caption("Aplicación")
+        val appGroup = group()
+        appGroup.addView(row("Buscar actualizaciones", "Versión instalada: ${BuildConfig.VERSION_NAME}") {
+            Updater.check(this, manual = true)
+        })
     }
 
     private fun stamp() = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
@@ -154,6 +161,15 @@ class AccountActivity : AppCompatActivity() {
             auth { CloudSync.signUp(email.text.toString(), pass.text.toString()) }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dpi(6) })
         cloud.addView(buttons)
+        if (CloudSync.webClientId(this) != null) {
+            cloud.addView(pill("G   Continuar con Google", filled = false) {
+                auth { CloudSync.signInWithGoogle(this) }
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(dpi(16), dpi(6), dpi(16), 0)
+                }
+            })
+        }
         cloud.addView(TextView(this).apply {
             text = "¿Olvidaste tu contraseña?"
             setTextColor(color(R.color.accent))
@@ -188,6 +204,8 @@ class AccountActivity : AppCompatActivity() {
 
     private fun friendly(e: Throwable?): String {
         val m = e?.message ?: return "Error desconocido"
+        if (e is androidx.credentials.exceptions.GetCredentialCancellationException) return "Inicio de sesión cancelado"
+        if (e is androidx.credentials.exceptions.NoCredentialException) return "No hay cuentas de Google en el teléfono"
         return when {
             m.contains("password", true) && m.contains("invalid", true) -> "Email o contraseña incorrectos"
             m.contains("credential", true) -> "Email o contraseña incorrectos"
@@ -219,7 +237,9 @@ class AccountActivity : AppCompatActivity() {
                 .setTitle("¿Cerrar sesión?")
                 .setMessage("Tus libros y notas se quedan en este dispositivo.")
                 .setNegativeButton("Cancelar", null)
-                .setPositiveButton("Cerrar sesión") { _, _ -> CloudSync.signOut(); build() }
+                .setPositiveButton("Cerrar sesión") { _, _ ->
+                    lifecycleScope.launch { CloudSync.signOut(this@AccountActivity); build() }
+                }
                 .show()
         })
     }

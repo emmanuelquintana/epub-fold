@@ -45,7 +45,8 @@ enum class PageAnimation(val label: String) {
 enum class LibrarySort(val label: String) {
     RECENT("Recientes"),
     TITLE("Título"),
-    AUTHOR("Autor");
+    AUTHOR("Autor"),
+    SERIES("Serie");
 }
 
 enum class AutoTheme(val label: String) {

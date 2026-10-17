@@ -66,6 +66,10 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
 
     companion object {
         const val EXTRA_ID = "book_id"
+        /** Abrir en un subrayado concreto (capítulo e intervalo de caracteres). */
+        const val EXTRA_CHAPTER = "chapter"
+        const val EXTRA_START = "start"
+        const val EXTRA_END = "end"
         private val RATES = floatArrayOf(0.8f, 1f, 1.25f, 1.5f, 2f)
     }
 
@@ -96,6 +100,12 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     private lateinit var player: LinearLayout
     private lateinit var playerToggle: ImageButton
     private lateinit var playerRate: TextView
+    private lateinit var playerTimer: TextView
+    private lateinit var ruler: ReadingRulerView
+    private var notebookView: NotebookView? = null
+    private var pendingHighlight: Triple<Int, Int, Int>? = null
+    /** Momento (elapsedRealtime) en que el temporizador detiene la lectura; 0 = sin temporizador. */
+    private var sleepAt = 0L
     private lateinit var insetsController: WindowInsetsControllerCompat
     private lateinit var selectionMenu: SelectionMenu
     private lateinit var readAloud: ReadAloud
@@ -137,6 +147,12 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         notes = Annotations(this, e.id)
         position = ReadingPosition(e.chapter, e.charOffset)
         finishedShown = e.finishedAt > 0L
+        if (intent.hasExtra(EXTRA_CHAPTER)) {
+            val ch = intent.getIntExtra(EXTRA_CHAPTER, 0)
+            val s = intent.getIntExtra(EXTRA_START, 0)
+            position = ReadingPosition(ch, s)
+            pendingHighlight = Triple(ch, s, intent.getIntExtra(EXTRA_END, s))
+        }
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_reader)
@@ -159,7 +175,13 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         player = findViewById(R.id.player)
         playerToggle = findViewById(R.id.playerToggle)
         playerRate = findViewById(R.id.playerRate)
+        playerTimer = findViewById(R.id.playerTimer)
         selectionMenu = SelectionMenu(this)
+        ruler = ReadingRulerView(this)
+        // Encima del libro y debajo de las barras
+        findViewById<FrameLayout>(R.id.root).addView(ruler, 1, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        ruler.visibility = if (prefs.ruler) View.VISIBLE else View.GONE
 
         insetsController = WindowInsetsControllerCompat(window, window.decorView)
         insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -201,10 +223,19 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             textOf = { bookView.paginator?.textOf(it) ?: "" },
             chapterCount = { book?.spine?.size ?: 0 },
             onSentence = { ch, s, e -> onSpeechSentence(ch, s, e) },
-            onStateChanged = { updatePlayer() },
+            onStateChanged = {
+                updatePlayer()
+                ReadAloudService.update(this)
+            },
             onError = { toast(it) },
         )
         readAloud.rate = prefs.ttsRate
+        readAloud.onChapterEndStop = {
+            sleepAt = 0L
+            updateTimerLabel()
+            toast("Temporizador: fin del capítulo")
+        }
+        ReadAloudService.controller = speechController
 
         setupSidePanel()
         lastEffective = prefs.effectiveTheme()
@@ -239,10 +270,9 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             updatePlayer()
             if (readAloud.playing) readAloud.play(this, readAloud.chapter, readAloud.offset)
         }
-        findViewById<View>(R.id.playerClose).setOnClickListener {
-            readAloud.stop()
-            player.visibility = View.GONE
-        }
+        findViewById<View>(R.id.playerClose).setOnClickListener { stopListening() }
+        playerTimer.setOnClickListener { chooseSleepTimer() }
+        updateTimerLabel()
 
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, value: Int, fromUser: Boolean) {
@@ -310,11 +340,18 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         lastActivity = 0L
         savePosition()
         selectionMenu.dismiss()
+        notebookView?.flush()
         CloudSync.schedulePush(applicationContext, entry.id)
+        handler.postDelayed({ Widgets.updateAll(applicationContext) }, 500)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        handler.removeCallbacks(sleepTick)
+        if (ReadAloudService.controller === speechController) {
+            ReadAloudService.controller = null
+            ReadAloudService.stop(this)
+        }
         if (::readAloud.isInitialized) readAloud.shutdown()
         book?.close()
     }
@@ -339,6 +376,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
 
     override fun onPageChanged(page: Int) {
         bookView.paginator?.let { position = it.positionOf(page) }
+        if (ruler.visibility == View.VISIBLE) ruler.resetToTop()
         trackReadingSpeed()
         markActivity()
         seek.progress = page
@@ -492,6 +530,9 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             }
             loading.visibility = View.GONE
             bookView.setContent(p, m, spread, p.pageFor(target))
+            pendingHighlight?.let { bookView.highlight = it }
+            pendingHighlight = null
+            ruler.bandHeight = paint.fontSpacing * lineSpacing * 3.2f
             seek.max = max(0, p.pageCount - 1)
             seek.progress = bookView.currentPage
             updateInfo(bookView.currentPage)
@@ -616,9 +657,99 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
 
     // ---------------------------------------------------------------- lectura en voz alta
 
+    /** Lo que la notificación y la pantalla de bloqueo controlan. */
+    private val speechController = object : ReadAloudService.Controller {
+        override fun isPlaying() = readAloud.playing
+        override fun play() = readAloud.play(this@ReaderActivity, readAloud.chapter, readAloud.offset)
+        override fun pause() = readAloud.pause()
+        override fun skip() = readAloud.skipSentence(this@ReaderActivity)
+        override fun stop() = stopListening()
+        override fun title() = entry.title
+        override fun subtitle() = book?.chapterTitle(readAloud.chapter) ?: entry.author
+        override fun cover(): android.graphics.Bitmap? = entry.coverPath?.let {
+            runCatching { android.graphics.BitmapFactory.decodeFile(it) }.getOrNull()
+        }
+    }
+
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { ReadAloudService.update(this) }
+
+    private fun stopListening() {
+        readAloud.stop()
+        player.visibility = View.GONE
+        sleepAt = 0L
+        readAloud.stopAtChapterEnd = false
+        handler.removeCallbacks(sleepTick)
+        updateTimerLabel()
+        ReadAloudService.stop(this)
+    }
+
+    private val sleepTick = object : Runnable {
+        override fun run() {
+            if (sleepAt == 0L) return
+            if (SystemClock.elapsedRealtime() >= sleepAt) {
+                sleepAt = 0L
+                if (readAloud.playing) readAloud.pause()
+                toast("Temporizador: lectura detenida")
+            } else {
+                handler.postDelayed(this, 15_000)
+            }
+            updateTimerLabel()
+        }
+    }
+
+    private fun chooseSleepTimer() {
+        val minutes = intArrayOf(0, 5, 15, 30, 45, 60)
+        val labels = arrayOf("Sin temporizador", "5 minutos", "15 minutos", "30 minutos", "45 minutos", "1 hora", "Al final del capítulo")
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Detener la lectura")
+            .setItems(labels) { _, which ->
+                handler.removeCallbacks(sleepTick)
+                readAloud.stopAtChapterEnd = which == labels.size - 1
+                sleepAt = if (which in 1 until minutes.size) SystemClock.elapsedRealtime() + minutes[which] * 60_000L else 0L
+                if (sleepAt > 0L) handler.postDelayed(sleepTick, 15_000)
+                updateTimerLabel()
+            }
+            .show()
+    }
+
+    private fun updateTimerLabel() {
+        if (!::playerTimer.isInitialized) return
+        playerTimer.text = when {
+            readAloud.stopAtChapterEnd -> "Fin cap."
+            sleepAt > 0L -> "${((sleepAt - SystemClock.elapsedRealtime()) / 60_000L + 1).coerceAtLeast(1)} min"
+            else -> ""
+        }
+        playerTimer.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_timer, 0, 0, 0)
+        val active = readAloud.stopAtChapterEnd || sleepAt > 0L
+        val c = if (active) accent() else colors.secondary
+        playerTimer.setTextColor(c)
+        playerTimer.compoundDrawableTintList = ColorStateList.valueOf(c)
+    }
+
+    private fun showSpeedReader() {
+        val p = bookView.paginator ?: return
+        val b = book ?: return
+        val pos = p.positionOf(bookView.currentPage)
+        if (readAloud.playing) readAloud.pause()
+        SpeedReader(
+            this, prefs, colors, accent(), prefs.font.typeface(this),
+            textOf = { p.textOf(it) }, chapterCount = b.spine.size,
+        ) { ch, off ->
+            bookView.goTo(p.pageFor(ReadingPosition(ch, off)))
+        }.show(pos.chapter, pos.charOffset)
+    }
+
+    private fun applyRuler() {
+        ruler.visibility = if (prefs.ruler) View.VISIBLE else View.GONE
+    }
+
     private fun startListening(from: ReadingPosition?) {
         val p = bookView.paginator ?: return
         val pos = from ?: p.positionOf(bookView.currentPage)
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         setOverlay(false)
         player.visibility = View.VISIBLE
         player.alpha = 0f
@@ -684,6 +815,9 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         player.background = roundRect(card, dp(26f))
         playerToggle.imageTintList = ColorStateList.valueOf(t.text)
         findViewById<ImageButton>(R.id.playerClose).imageTintList = ColorStateList.valueOf(t.secondary)
+        updateTimerLabel()
+        ruler.setColors(accent, t.isDark)
+        notebookView?.setColors(t.paper, t.text, t.secondary, accent)
         playerRate.setTextColor(accent)
         playerRate.background = roundRect(ColorUtils.blendARGB(card, t.text, 0.08f), dp(14f))
         titleView.setTextColor(t.text)
@@ -752,6 +886,8 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
                 lastEffective = null
                 if (prefs.autoTheme == AutoTheme.OFF) applyColors(prefs.theme) else checkAutoTheme()
             },
+            onRuler = { applyRuler() },
+            onSpeedRead = { showSpeedReader() },
         ).show()
     }
 
@@ -792,7 +928,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         list.adapter = sideAdapter
         sideTabs = SegmentedControl(this)
         findViewById<FrameLayout>(R.id.sideTabs).addView(sideTabs)
-        sideTabs.setOptions(listOf("Contenido", "Marcadores", "Notas"), 0)
+        sideTabs.setOptions(listOf("Contenido", "Marcadores", "Notas", "Cuaderno"), 0)
         sideTabs.onSelected = { refreshSide() }
         updatePanelVisibility()
     }
@@ -810,6 +946,21 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     }
 
     private fun refreshSide() {
+        val notebookTab = sideTabs.selected == 3
+        val box = findViewById<FrameLayout>(R.id.sideNotebook)
+        box.visibility = if (notebookTab) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.sideList).visibility = if (notebookTab) View.GONE else View.VISIBLE
+        if (notebookTab) {
+            sideStatus.visibility = View.GONE
+            if (notebookView == null) {
+                notebookView = NotebookView(this, entry.id, notes).also {
+                    box.addView(it, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                    it.setColors(colors.paper, colors.text, colors.secondary, accent())
+                }
+            }
+            return
+        }
+        notebookView?.flush()
         val rows = buildRows(sideTabs.selected, { msg ->
             sideStatus.visibility = if (msg.isNullOrEmpty()) View.GONE else View.VISIBLE
             sideStatus.text = msg
@@ -874,7 +1025,11 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
                     else "${notes.highlights.size} subrayados · ${notes.highlights.count { it.note.isNotBlank() }} con nota"
                 )
                 val rows = ArrayList<SheetRow>()
-                if (notes.highlights.isNotEmpty() || notes.bookmarks.isNotEmpty()) {
+                if (!isWide() || !prefs.sidePanel) {
+                    rows += SheetRow("Cuaderno del libro…", caption = notes.notebook.trim().take(120).ifEmpty { "Notas largas y escritura a mano" },
+                        highlighted = true) { showNotebookSheet() }
+                }
+                if (notes.highlights.isNotEmpty() || notes.bookmarks.isNotEmpty() || notes.notebook.isNotBlank()) {
                     rows += SheetRow("Exportar notas y subrayados…", highlighted = true) { exportNotes() }
                 }
                 notes.highlights.sortedWith(compareBy({ it.chapter }, { it.start })).forEach { h ->
@@ -904,6 +1059,24 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
                 rows
             }
         }
+    }
+
+    /** Cuaderno en una hoja a pantalla casi completa (teléfono cerrado). */
+    private fun showNotebookSheet() {
+        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val view = NotebookView(this, entry.id, notes)
+        val bg = ColorUtils.blendARGB(colors.paper, colors.text, if (colors.isDark) 0.06f else 0.03f)
+        view.setBackgroundColor(bg)
+        view.setPadding(0, dpi(16), 0, 0)
+        view.setColors(bg, colors.text, colors.secondary, accent())
+        dialog.setContentView(view, android.view.ViewGroup.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.88f).toInt()))
+        dialog.behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+        dialog.behavior.skipCollapsed = true
+        // Arrastrar dentro del cuaderno no debe cerrar la hoja
+        dialog.behavior.isDraggable = false
+        dialog.setOnDismissListener { view.flush(); afterNotesChanged() }
+        dialog.show()
     }
 
     private fun notesMarkdown(): String =

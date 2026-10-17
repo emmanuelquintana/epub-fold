@@ -7,4 +7,6 @@
     <string name="contents">Índice</string>
     <string name="theme">Tema</string>
     <string name="text_settings">Ajustes de lectura</string>
+    <string name="widget_continue_desc">Portada y progreso del libro que estás leyendo</string>
+    <string name="widget_memory_desc">Una frase subrayada de tus libros, distinta cada día</string>
 </resources>

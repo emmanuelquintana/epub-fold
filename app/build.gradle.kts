@@ -84,4 +84,18 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
+
+    // Iniciar sesión con Google (Credential Manager)
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+
+    // Controles de la lectura en voz alta en notificación y pantalla de bloqueo
+    implementation("androidx.media:media:1.7.0")
+
+    // Importar carpetas completas
+    implementation("androidx.documentfile:documentfile:1.0.1")
+
+    // Cómics en CBR (RAR)
+    implementation("com.github.junrar:junrar:7.5.5")
 }

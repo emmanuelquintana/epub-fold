@@ -25,6 +25,12 @@ data class BookEntry(
     val finishedAt: Long = 0L,
     /** Última vez que cambió la posición (para sincronizar). */
     val updatedAt: Long = 0L,
+    val format: BookFormat = BookFormat.EPUB,
+    /** Serie a la que pertenece ("" si ninguna) y número dentro de ella. */
+    val series: String = "",
+    val seriesIndex: Float = 0f,
+    /** Ya se buscó portada en internet (para no repetir). */
+    val coverLookedUp: Boolean = false,
 ) {
     /** Identificador estable entre dispositivos (mismo libro = mismo título y autor). */
     val key: String get() = bookKey(title, author)
@@ -64,18 +70,33 @@ class Library(private val context: Context) {
 
     fun findByKey(key: String): BookEntry? = load().firstOrNull { it.key == key }
 
-    /** Copia el EPUB del [uri] y lo añade. Se ejecuta en segundo plano. */
+    /** Copia el libro del [uri] y lo añade. Se ejecuta en segundo plano. */
     fun import(uri: Uri): BookEntry {
+        val name = runCatching {
+            context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')
         val input = context.contentResolver.openInputStream(uri)
             ?: throw IllegalArgumentException("No se pudo leer el archivo")
-        return input.use { importStream(it) }
+        return input.use { importStream(it, name) }
     }
 
-    /** Añade un EPUB desde un flujo. Si el libro ya existe, devuelve el existente. */
-    fun importStream(input: java.io.InputStream): BookEntry {
+    /**
+     * Añade un libro (EPUB, PDF, CBZ o CBR) desde un flujo. [fileName] sirve de título
+     * para los formatos sin metadatos. Si el libro ya existe, devuelve el existente.
+     */
+    fun importStream(input: java.io.InputStream, fileName: String? = null): BookEntry {
         val id = UUID.randomUUID().toString()
+        val raw = File(booksDir, "$id.tmp")
+        raw.outputStream().use { input.copyTo(it) }
+        val kind = runCatching { Formats.detect(raw) }.getOrNull()
+        if (kind == null) {
+            raw.delete()
+            throw IllegalArgumentException("Formato no compatible (usa EPUB, PDF, CBZ o CBR)")
+        }
+        if (kind != "epub") return importImageBook(id, raw, kind, fileName)
         val dest = File(booksDir, "$id.epub")
-        dest.outputStream().use { input.copyTo(it) }
+        raw.renameTo(dest)
 
         return try {
             EpubBook(dest).use { book ->
@@ -99,7 +120,7 @@ class Library(private val context: Context) {
                     }
                 }
                 val entry = BookEntry(id, book.title, book.author, dest.absolutePath, cover, 0f,
-                    System.currentTimeMillis(), 0, 0)
+                    System.currentTimeMillis(), 0, 0, series = book.series, seriesIndex = book.seriesIndex)
                 save(load() + entry)
                 entry
             }
@@ -108,6 +129,71 @@ class Library(private val context: Context) {
             throw e
         }
     }
+
+    private fun importImageBook(id: String, raw: File, kind: String, fileName: String?): BookEntry {
+        val dest = File(booksDir, "$id.${if (kind == "pdf") "pdf" else "cbz"}")
+        try {
+            if (kind == "rar") {
+                Formats.rarToCbz(raw, dest)
+                raw.delete()
+            } else {
+                raw.renameTo(dest)
+            }
+            val format = if (kind == "pdf") BookFormat.PDF else BookFormat.CBZ
+            val meta = if (format == BookFormat.CBZ) Formats.comicInfo(dest) else null
+            val baseName = fileName?.substringBeforeLast('.')?.replace('_', ' ')?.trim()?.ifEmpty { null }
+            val title = meta?.title ?: baseName ?: "Sin título"
+            val author = meta?.author.orEmpty()
+            findByKey(bookKey(title, author))?.let { existing ->
+                dest.delete()
+                return existing
+            }
+            val cover = Formats.open(format, dest).use { b ->
+                b.render(0, 400, 600)?.let { bmp -> saveCover(id, bmp) }
+            }
+            val entry = BookEntry(
+                id, title, author, dest.absolutePath, cover, 0f, System.currentTimeMillis(), 0, 0,
+                format = format, series = meta?.series.orEmpty(), seriesIndex = meta?.seriesIndex ?: 0f,
+                coverLookedUp = true,
+            )
+            save(load() + entry)
+            return entry
+        } catch (e: Exception) {
+            raw.delete()
+            dest.delete()
+            throw e
+        }
+    }
+
+    private fun saveCover(id: String, bmp: Bitmap): String {
+        val f = File(coversDir, "$id.jpg")
+        f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+        return f.absolutePath
+    }
+
+    /** Guarda como portada una imagen descargada (p. ej. de Open Library). */
+    fun setCover(id: String, bytes: ByteArray): Boolean {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+        // Open Library devuelve una imagen de 1×1 cuando no tiene portada
+        if (o.outWidth < 40 || o.outHeight < 40) return false
+        var sample = 1
+        while (o.outWidth / (sample * 2) >= 400) sample *= 2
+        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+            ?: return false
+        // Nombre nuevo para que la caché de portadas no muestre la anterior
+        val f = File(coversDir, "$id-${System.currentTimeMillis() % 100000}.jpg")
+        f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+        val old = get(id)?.coverPath
+        update(id) { it.copy(coverPath = f.absolutePath, coverLookedUp = true) }
+        old?.let { if (it != f.absolutePath) File(it).delete() }
+        return true
+    }
+
+    fun markCoverLookedUp(id: String) = update(id) { it.copy(coverLookedUp = true) }
+
+    fun setSeries(id: String, series: String, index: Float) =
+        update(id) { it.copy(series = series.trim(), seriesIndex = index) }
 
     fun updatePosition(id: String, chapter: Int, charOffset: Int, progress: Float) {
         val now = System.currentTimeMillis()
@@ -140,6 +226,7 @@ class Library(private val context: Context) {
 
     fun delete(id: String) {
         Annotations(context, id).clear()
+        java.io.File(java.io.File(context.filesDir, "sketches"), "$id.json").delete()
         val list = load()
         list.firstOrNull { it.id == id }?.let { e ->
             File(e.path).delete()
@@ -161,6 +248,8 @@ class Library(private val context: Context) {
                     o.optDouble("progress", 0.0).toFloat(), o.optLong("lastOpened"),
                     o.optInt("chapter"), o.optInt("charOffset"),
                     o.optString("shelf"), o.optLong("finishedAt"), o.optLong("updatedAt"),
+                    BookFormat.of(o.optString("format")), o.optString("series"),
+                    o.optDouble("seriesIndex", 0.0).toFloat(), o.optBoolean("coverLookedUp"),
                 )
             }
         } catch (e: Exception) {
@@ -178,6 +267,8 @@ class Library(private val context: Context) {
                 put("progress", it.progress.toDouble()); put("lastOpened", it.lastOpened)
                 put("chapter", it.chapter); put("charOffset", it.charOffset)
                 put("shelf", it.shelf); put("finishedAt", it.finishedAt); put("updatedAt", it.updatedAt)
+                put("format", it.format.name); put("series", it.series)
+                put("seriesIndex", it.seriesIndex.toDouble()); put("coverLookedUp", it.coverLookedUp)
             })
         }
         val tmp = File(indexFile.parentFile, "library.json.tmp")
@@ -335,6 +426,16 @@ class ReaderPrefs(context: Context) {
     var secondsPerPage: Float
         get() = sp.getFloat("secondsPerPage", 50f)
         set(v) = sp.edit().putFloat("secondsPerPage", v).apply()
+
+    /** Palabras por minuto de la lectura rápida. */
+    var speedWpm: Int
+        get() = sp.getInt("speedWpm", 300)
+        set(v) = sp.edit().putInt("speedWpm", v).apply()
+
+    /** Regla de lectura visible. */
+    var ruler: Boolean
+        get() = sp.getBoolean("ruler", false)
+        set(v) = sp.edit().putBoolean("ruler", v).apply()
 
     var librarySort: LibrarySort
         get() = enumPref("librarySort", LibrarySort.RECENT)
