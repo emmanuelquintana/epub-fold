@@ -315,11 +315,22 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:id="@+id/sectionTitle"
+            android:ellipsize="end"
+            android:maxLines="1"
             android:text="Todos los libros" />
 
-        <FrameLayout
-            android:id="@+id/sortBox"
+        <TextView
+            android:id="@+id/sortButton"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content" />
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_search_field"
+            android:contentDescription="Ordenar"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="1"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="6dp"
+            android:textColor="@color/accent"
+            android:textSize="14sp" />
     </LinearLayout>
 </LinearLayout>

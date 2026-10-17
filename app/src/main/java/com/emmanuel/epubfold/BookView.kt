@@ -45,10 +45,20 @@ data class PageMetrics(
     val contentH: Int get() = (height - marginTop - marginBottom).toInt()
 
     companion object {
+        /** Ancho máximo de la columna de texto (≈ 70 caracteres): más allá cuesta seguir las líneas. */
+        private const val MAX_TEXT_DP = 620f
+
         fun of(w: Int, h: Int, spread: Boolean, density: Float, marginScale: Float = 1f): PageMetrics {
             val pageW = if (spread) w / 2f else w.toFloat()
-            val marginH = max(14 * density, max(22 * density, pageW * 0.075f) * marginScale)
-            return PageMetrics(pageW, h.toFloat(), marginH, 56 * density, 46 * density)
+            var marginH = max(14 * density, max(22 * density, pageW * 0.075f) * marginScale)
+            // Una sola página en el Fold abierto (o una ventana muy ancha): columna centrada
+            val maxText = MAX_TEXT_DP * density / marginScale.coerceAtLeast(0.6f)
+            if (pageW - 2 * marginH > maxText) marginH = (pageW - maxText) / 2
+            // Pantallas bajas (exterior en horizontal, ventana flotante): menos espacio arriba y abajo
+            val short = h / density < 520f
+            val top = (if (short) 34 else 56) * density
+            val bottom = (if (short) 30 else 46) * density
+            return PageMetrics(pageW, h.toFloat(), marginH, top, bottom)
         }
     }
 }

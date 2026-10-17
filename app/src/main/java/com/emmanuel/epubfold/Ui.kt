@@ -50,7 +50,12 @@ class SegmentedControl(context: Context) : LinearLayout(context) {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setTextColor(context.color(R.color.label))
                 val v = context.dpi(6)
-                setPadding(context.dpi(10), v, context.dpi(10), v)
+                // Con muchas opciones o poco ancho, menos relleno y letra que se encoge
+                val h = if (options.size >= 4) context.dpi(4) else context.dpi(10)
+                setPadding(h, v, h, v)
+                androidx.core.widget.TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+                    this, 9, 13, 1, TypedValue.COMPLEX_UNIT_SP
+                )
                 setOnClickListener { select(i, notify = true) }
             }
             addView(tv, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
@@ -71,6 +76,24 @@ class SegmentedControl(context: Context) : LinearLayout(context) {
             performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
             onSelected?.invoke(index)
         }
+    }
+}
+
+/** Ancho disponible en dp (cambia al plegar, desplegar o usar pantalla dividida). */
+fun Context.widthDp(): Int = resources.configuration.screenWidthDp
+
+/**
+ * En pantallas anchas (Fold abierto, tablet) limita el ancho de [content] y lo centra,
+ * para que las listas y formularios no se estiren de borde a borde.
+ */
+fun Context.capWidth(content: View, maxDp: Int = 640) {
+    val lp = content.layoutParams
+    val max = dpi(maxDp)
+    val avail = (widthDp() * resources.displayMetrics.density).toInt()
+    if (lp is android.widget.FrameLayout.LayoutParams) {
+        lp.width = if (avail > max + dpi(32)) max else android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        lp.gravity = Gravity.CENTER_HORIZONTAL
+        content.layoutParams = lp
     }
 }
 

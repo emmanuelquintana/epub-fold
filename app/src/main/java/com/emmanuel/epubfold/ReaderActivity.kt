@@ -1073,6 +1073,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             android.view.ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.88f).toInt()))
         dialog.behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
         dialog.behavior.skipCollapsed = true
+        dialog.behavior.maxWidth = dpi(760)
         // Arrastrar dentro del cuaderno no debe cerrar la hoja
         dialog.behavior.isDraggable = false
         dialog.setOnDismissListener { view.flush(); afterNotesChanged() }

@@ -153,6 +153,7 @@ class StatsActivity : AppCompatActivity() {
         }
         scroll.addView(col)
         setContentView(scroll)
+        capWidth(col, 720)
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { v, insets ->
             val b = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             col.updatePadding(top = b.top + dpi(8), bottom = b.bottom + dpi(32), left = b.left + dpi(20), right = b.right + dpi(20))

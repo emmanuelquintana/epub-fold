@@ -80,6 +80,9 @@ class SpeedReader(
             setTextColor(colors.text)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 40f)
             maxLines = 1
+            androidx.core.widget.TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+                this, 18, 40, 2, TypedValue.COMPLEX_UNIT_SP
+            )
             setPadding(0, activity.dpi(16), 0, activity.dpi(16))
         }
         stage.addView(wordView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))

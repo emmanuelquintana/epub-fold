@@ -129,8 +129,9 @@ class LibraryActivity : AppCompatActivity() {
             insets
         }
 
-        // Más columnas cuando el Fold está abierto
-        val columns = max(3, resources.configuration.screenWidthDp / 132)
+        // Columnas según el ancho: 2 en ventanas estrechas, 3 en la pantalla exterior, más con el Fold abierto
+        val usable = widthDp() - 28
+        val columns = (usable / 122).coerceIn(2, 8)
         val glm = GridLayoutManager(this, columns)
         glm.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
             override fun getSpanSize(position: Int) = if (position == 0) columns else 1
@@ -502,8 +503,7 @@ class LibraryActivity : AppCompatActivity() {
         val heroContinue: View = v.findViewById(R.id.heroContinue)
         val empty: View = v.findViewById(R.id.empty)
         val section: View = v.findViewById(R.id.section)
-        val sortBox: FrameLayout = v.findViewById(R.id.sortBox)
-        val sort = SegmentedControl(v.context)
+        val sortButton: TextView = v.findViewById(R.id.sortButton)
         val search: android.widget.EditText = v.findViewById(R.id.search)
         val filterBox: FrameLayout = v.findViewById(R.id.filterBox)
         val filter = SegmentedControl(v.context)
@@ -532,11 +532,22 @@ class LibraryActivity : AppCompatActivity() {
                     }
                 }
             })
-            sortBox.addView(sort)
-            sort.setOptions(LibrarySort.entries.map { it.label }, prefs.librarySort.ordinal)
-            sort.onSelected = { i ->
-                prefs.librarySort = LibrarySort.entries[i]
-                refresh()
+            sortButton.text = "${prefs.librarySort.label} ▾"
+            sortButton.setOnClickListener { anchor ->
+                PopupMenu(this@LibraryActivity, anchor).apply {
+                    LibrarySort.entries.forEachIndexed { i, s ->
+                        menu.add(0, i, i, s.label).isCheckable = true
+                        menu.getItem(i).isChecked = s == prefs.librarySort
+                    }
+                    menu.setGroupCheckable(0, true, true)
+                    setOnMenuItemClickListener {
+                        prefs.librarySort = LibrarySort.entries[it.itemId]
+                        sortButton.text = "${prefs.librarySort.label} ▾"
+                        refresh()
+                        true
+                    }
+                    show()
+                }
             }
             v.findViewById<View>(R.id.emptyAdd).setOnClickListener { pickBook() }
             v.findViewById<View>(R.id.dailyNext).setOnClickListener {

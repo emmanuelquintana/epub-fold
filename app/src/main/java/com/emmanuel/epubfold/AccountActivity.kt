@@ -62,6 +62,7 @@ class AccountActivity : AppCompatActivity() {
         }
         scroll.addView(col)
         setContentView(scroll)
+        capWidth(col)
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { _, insets ->
             val b = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime()

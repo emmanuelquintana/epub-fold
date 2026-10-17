@@ -89,6 +89,7 @@ class ListSheet(activity: Activity, title: String) {
         dialog.setContentView(view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h))
         dialog.behavior.state = BottomSheetBehavior.STATE_EXPANDED
         dialog.behavior.skipCollapsed = true
+        dialog.behavior.maxWidth = activity.dpi(680)
     }
 
     fun setStatus(text: String?) {
@@ -240,7 +241,8 @@ class SettingsSheet(
         // --- Temas
         spacer(col, 22)
         col.addView(caption("Temas"))
-        val perRow = 4
+        // 4 temas por fila; 3 si la pantalla es muy estrecha (ventana dividida)
+        val perRow = if (ctx.widthDp() < 340) 3 else 4
         themeTiles.clear()
         ReaderTheme.entries.chunked(perRow).forEach { chunk ->
             val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
@@ -369,6 +371,7 @@ class SettingsSheet(
         dialog.setContentView(scroll)
         dialog.behavior.state = BottomSheetBehavior.STATE_EXPANDED
         dialog.behavior.skipCollapsed = true
+        dialog.behavior.maxWidth = ctx.dpi(680)
         dialogRef = dialog
         dialog.show()
     }

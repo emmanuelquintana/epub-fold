@@ -140,9 +140,12 @@ class OpdsActivity : AppCompatActivity() {
         }
         col.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(col)
+        col.addOnLayoutChangeListener { v, l, _, r, _, ol, _, or_, _ -> if (r - l != or_ - ol) v.requestApplyInsets() }
         ViewCompat.setOnApplyWindowInsetsListener(col) { _, i ->
             val b = i.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime())
-            col.updatePadding(top = b.top, left = b.left, right = b.right)
+            // Con el Fold abierto, la lista no se estira de borde a borde
+            val side = ((col.width - dpi(720)) / 2).coerceAtLeast(0)
+            col.updatePadding(top = b.top, left = b.left + side, right = b.right + side)
             list.updatePadding(bottom = b.bottom + dpi(16))
             i
         }
