@@ -10,4 +10,13 @@
     <color name="seg_bg">#3D767680</color>
     <color name="seg_selected">#636366</color>
     <color name="fill">#33767680</color>
+    <!-- Colores de acento en modo oscuro -->
+    <color name="accent_naranja">#FF9F0A</color>
+    <color name="accent_rojo">#FF453A</color>
+    <color name="accent_rosa">#FF375F</color>
+    <color name="accent_morado">#BF5AF2</color>
+    <color name="accent_azul">#0A84FF</color>
+    <color name="accent_turquesa">#40C8E0</color>
+    <color name="accent_verde">#30D158</color>
+    <color name="accent_grafito">#98989D</color>
 </resources>

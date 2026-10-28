@@ -41,7 +41,19 @@
                     android:padding="8dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/ic_chart"
-                    app:tint="@color/accent" />
+                    app:tint="?attr/colorPrimary" />
+
+                <ImageButton
+                    android:id="@+id/appearance"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_circle_fill"
+                    android:contentDescription="Apariencia"
+                    android:padding="8dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_palette"
+                    app:tint="?attr/colorPrimary" />
             </LinearLayout>
 
             <TextView
@@ -64,7 +76,7 @@
                 android:padding="8dp"
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_more"
-                app:tint="@color/accent" />
+                app:tint="?attr/colorPrimary" />
 
             <ImageButton
                 android:id="@+id/account"
@@ -77,7 +89,7 @@
                 android:padding="8dp"
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_person"
-                app:tint="@color/accent" />
+                app:tint="?attr/colorPrimary" />
 
             <ImageButton
                 android:id="@+id/add"
@@ -90,7 +102,7 @@
                 android:padding="7dp"
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_add"
-                app:tint="@color/accent" />
+                app:tint="?attr/colorPrimary" />
         </FrameLayout>
 
         <View
@@ -108,5 +120,5 @@
         android:layout_gravity="center"
         android:indeterminate="true"
         android:visibility="gone"
-        app:indicatorColor="@color/accent" />
+        app:indicatorColor="?attr/colorPrimary" />
 </FrameLayout>

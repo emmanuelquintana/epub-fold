@@ -44,7 +44,7 @@ class FoundBook(
     /** Identifica el archivo entre escaneos aunque cambie de nombre la biblioteca. */
     val key get() = "$fileName|$size"
     var inLibrary = false
-    var checked = true
+    var checked = false
 }
 
 /**
@@ -129,14 +129,14 @@ object StorageScan {
     private fun fold(s: String) =
         Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD).replace(Regex("\\p{M}"), "").replace(Regex("[^a-z0-9]"), "")
 
-    /** Marca los que ya se importaron antes o cuyo título coincide con uno de la biblioteca. */
+    /** Señala los que ya se importaron antes o cuyo título coincide con uno de la biblioteca. */
     fun markKnown(context: Context, found: List<FoundBook>) {
         val imported = prefs(context).getStringSet("imported", emptySet()) ?: emptySet()
         val titles = Library(context).all().map { fold(it.title) }.filter { it.length >= 6 }
         found.forEach { b ->
             val name = fold(b.title)
             b.inLibrary = b.key in imported || titles.any { name.contains(it) }
-            b.checked = !b.inLibrary
+            b.checked = false
         }
     }
 
@@ -296,7 +296,7 @@ class ScanPickerSheet(
         else "Buscando… $dirs carpetas revisadas · $found libros"
     }
 
-    /** Muestra el resultado. Los nuevos llegan marcados; los que ya tienes, sin marcar. */
+    /** Muestra el resultado. Todo llega sin marcar: el usuario elige qué añadir. */
     fun setResults(found: List<FoundBook>) {
         progress.visibility = View.GONE
         all = found.sortedWith(compareBy<FoundBook> { it.inLibrary }.thenBy { it.folder.lowercase() }.thenBy { it.title.lowercase() })

@@ -34,6 +34,36 @@
         <item name="cornerSizeBottomRight">0dp</item>
     </style>
 
+    <!-- Superposiciones de color de acento (se aplican en App al crear cada pantalla) -->
+    <style name="Accent.Rojo" parent="">
+        <item name="colorPrimary">@color/accent_rojo</item>
+        <item name="colorSecondary">@color/accent_rojo</item>
+    </style>
+    <style name="Accent.Rosa" parent="">
+        <item name="colorPrimary">@color/accent_rosa</item>
+        <item name="colorSecondary">@color/accent_rosa</item>
+    </style>
+    <style name="Accent.Morado" parent="">
+        <item name="colorPrimary">@color/accent_morado</item>
+        <item name="colorSecondary">@color/accent_morado</item>
+    </style>
+    <style name="Accent.Azul" parent="">
+        <item name="colorPrimary">@color/accent_azul</item>
+        <item name="colorSecondary">@color/accent_azul</item>
+    </style>
+    <style name="Accent.Turquesa" parent="">
+        <item name="colorPrimary">@color/accent_turquesa</item>
+        <item name="colorSecondary">@color/accent_turquesa</item>
+    </style>
+    <style name="Accent.Verde" parent="">
+        <item name="colorPrimary">@color/accent_verde</item>
+        <item name="colorSecondary">@color/accent_verde</item>
+    </style>
+    <style name="Accent.Grafito" parent="">
+        <item name="colorPrimary">@color/accent_grafito</item>
+        <item name="colorSecondary">@color/accent_grafito</item>
+    </style>
+
     <!-- Tipografía con jerarquía tipo iOS -->
     <style name="Text.LargeTitle" parent="">
         <item name="android:textSize">34sp</item>

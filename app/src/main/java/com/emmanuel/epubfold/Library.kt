@@ -322,6 +322,15 @@ class ReaderPrefs(context: Context) {
         get() = enumPref("lastDark", ReaderTheme.NOCHE)
         set(v) = sp.edit().putString("lastDark", v.name).apply()
 
+    /** Apariencia de la biblioteca y del resto de pantallas fuera del lector. */
+    var appMode: AppMode
+        get() = enumPref("appMode", AppMode.READER)
+        set(v) = sp.edit().putString("appMode", v.name).apply()
+
+    var accent: AppAccent
+        get() = enumPref("appAccent", AppAccent.NARANJA)
+        set(v) = sp.edit().putString("appAccent", v.name).apply()
+
     var fontSizeSp: Float
         get() = sp.getFloat("fontSize", 19f)
         set(v) = sp.edit().putFloat("fontSize", v).apply()

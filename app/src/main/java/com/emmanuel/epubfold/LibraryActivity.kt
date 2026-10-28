@@ -95,9 +95,7 @@ class LibraryActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         prefs = ReaderPrefs(this)
-        AppCompatDelegate.setDefaultNightMode(
-            if (prefs.isDarkTheme(prefs.effectiveTheme())) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
-        )
+        AppCompatDelegate.setDefaultNightMode(prefs.appNightMode())
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_library)
@@ -154,7 +152,28 @@ class LibraryActivity : AppCompatActivity() {
         findViewById<View>(R.id.stats).setOnClickListener { startActivity(Intent(this, StatsActivity::class.java)) }
         findViewById<View>(R.id.account).setOnClickListener { startActivity(Intent(this, AccountActivity::class.java)) }
         findViewById<View>(R.id.more).setOnClickListener { showMoreMenu(it) }
+        findViewById<View>(R.id.appearance).setOnClickListener { showAppearance(animate = true) }
         handleIntent(intent)
+        if (savedInstanceState?.getBoolean("appearance") == true) showAppearance(animate = false)
+    }
+
+    /** Tras un cambio de apariencia la pantalla se recrea; la hoja vuelve a abrirse. */
+    private var reopenAppearance = false
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean("appearance", reopenAppearance)
+    }
+
+    private fun showAppearance(animate: Boolean) {
+        lateinit var sheet: AppearanceSheet
+        sheet = AppearanceSheet(this, prefs) { recreateNow ->
+            reopenAppearance = true
+            sheet.dialog.window?.setWindowAnimations(0)
+            sheet.dialog.dismiss()
+            if (recreateNow) recreate()
+        }
+        sheet.show(animate)
     }
 
     private fun withAlpha(c: Int, a: Int) = (c and 0x00FFFFFF) or (a shl 24)
@@ -276,11 +295,8 @@ class LibraryActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Tema automático: la biblioteca sigue el modo claro/oscuro del tema de lectura
-        val wantDark = prefs.isDarkTheme(prefs.effectiveTheme())
-        AppCompatDelegate.setDefaultNightMode(
-            if (wantDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
-        )
+        // Claro u oscuro según «Apariencia» (por defecto, el del tema de lectura)
+        AppCompatDelegate.setDefaultNightMode(prefs.appNightMode())
         refresh()
         autoSync()
         autoCovers()

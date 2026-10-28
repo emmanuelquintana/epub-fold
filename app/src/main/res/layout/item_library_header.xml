@@ -104,7 +104,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Seguir leyendo"
-                android:textColor="@color/accent" />
+                android:textColor="?attr/colorPrimary" />
 
             <TextView
                 android:id="@+id/heroTitle"
@@ -137,7 +137,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:max="1000"
-                app:indicatorColor="@color/accent"
+                app:indicatorColor="?attr/colorPrimary"
                 app:trackColor="@color/fill"
                 app:trackCornerRadius="2dp"
                 app:trackThickness="4dp" />
@@ -199,7 +199,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="Recuerdo del día"
-                android:textColor="@color/accent" />
+                android:textColor="?attr/colorPrimary" />
 
             <TextView
                 android:id="@+id/dailyAll"
@@ -208,7 +208,7 @@
                 android:paddingHorizontal="8dp"
                 android:paddingVertical="4dp"
                 android:text="Ver todos"
-                android:textColor="@color/accent"
+                android:textColor="?attr/colorPrimary"
                 android:textSize="14sp" />
 
             <TextView
@@ -218,7 +218,7 @@
                 android:paddingStart="8dp"
                 android:paddingVertical="4dp"
                 android:text="Otro"
-                android:textColor="@color/accent"
+                android:textColor="?attr/colorPrimary"
                 android:textSize="14sp" />
         </LinearLayout>
 
@@ -330,7 +330,7 @@
             android:maxLines="1"
             android:paddingHorizontal="12dp"
             android:paddingVertical="6dp"
-            android:textColor="@color/accent"
+            android:textColor="?attr/colorPrimary"
             android:textSize="14sp" />
     </LinearLayout>
 </LinearLayout>
