@@ -260,7 +260,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         paginator?.paint?.color = theme.text
         paginator?.paint?.linkColor = theme.text
         flapPaint.color = theme.paper
-        highlightPaint.color = if (theme.isDark) 0x66FFB340 else 0x66FFD60A
+        highlightPaint.color = (accentColor and 0x00FFFFFF) or 0x55000000
         selectionPaint.color = (accentColor and 0x00FFFFFF) or 0x4D000000
         handlePaint.color = accentColor
         ribbonPaint.color = accentColor
