@@ -28,6 +28,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -62,29 +63,17 @@ class LibraryActivity : AppCompatActivity() {
 
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
         tree ?: return@registerForActivityResult
-        progress.visibility = View.VISIBLE
-        lifecycleScope.launch {
-            val files = withContext(Dispatchers.IO) {
-                val root = androidx.documentfile.provider.DocumentFile.fromTreeUri(this@LibraryActivity, tree)
-                val out = ArrayList<Uri>()
-                fun walk(d: androidx.documentfile.provider.DocumentFile, depth: Int) {
-                    if (depth > 6) return
-                    d.listFiles().forEach { f ->
-                        val n = f.name?.lowercase() ?: ""
-                        if (f.isDirectory) walk(f, depth + 1)
-                        else if (BOOK_EXT.any { n.endsWith(".$it") }) out += f.uri
-                    }
-                }
-                root?.let { walk(it, 0) }
-                out
-            }
-            progress.visibility = View.GONE
-            if (files.isEmpty()) {
-                Toast.makeText(this@LibraryActivity, "No hay EPUB, PDF ni cómics en esa carpeta", Toast.LENGTH_LONG).show()
-            } else {
-                importMany(files.map { u -> { library.import(u) } })
-            }
-        }
+        pickFound("Libros en la carpeta") { cancelled -> StorageScan.scanTree(this, tree, cancelled) }
+    }
+
+    /** Vuelve de Ajustes («Acceso a todos los archivos», Android 11+). */
+    private val allFilesAccess = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (StorageScan.hasAccess(this)) scanStorage()
+    }
+
+    private val readPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) scanStorage()
+        else Toast.makeText(this, "Sin permiso no se puede buscar en el teléfono. Puedes elegir una carpeta.", Toast.LENGTH_LONG).show()
     }
 
     private var dailySkip = 0
@@ -177,11 +166,13 @@ class LibraryActivity : AppCompatActivity() {
     private fun showAddMenu(anchor: View) {
         PopupMenu(this, anchor).apply {
             menu.add(0, 1, 0, "Archivos (EPUB, PDF, CBZ, CBR)…")
-            menu.add(0, 2, 1, "Carpeta completa…")
-            menu.add(0, 3, 2, "Catálogos en línea (OPDS)…")
+            menu.add(0, 4, 1, "Buscar en el teléfono…")
+            menu.add(0, 2, 2, "Carpeta completa…")
+            menu.add(0, 3, 3, "Catálogos en línea (OPDS)…")
             setOnMenuItemClickListener {
                 when (it.itemId) {
                     1 -> pickBook()
+                    4 -> scanStorage()
                     2 -> folderPicker.launch(null)
                     3 -> startActivity(Intent(this@LibraryActivity, OpdsActivity::class.java))
                 }
@@ -189,6 +180,57 @@ class LibraryActivity : AppCompatActivity() {
             }
             show()
         }
+    }
+
+    /** Busca libros en todo el almacenamiento, pidiendo antes el permiso si hace falta. */
+    private fun scanStorage() {
+        if (StorageScan.hasAccess(this)) {
+            pickFound("Libros en tu teléfono") { cancelled ->
+                StorageScan.scan(this, cancelled) { dirs, found -> runOnUiThread { scanSheet?.setProgress(dirs, found) } }
+            }
+            return
+        }
+        if (Build.VERSION.SDK_INT < 30) {
+            readPermission.launch(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+            return
+        }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Buscar libros en el teléfono")
+            .setMessage(
+                "Para revisar todas las carpetas, Android pide activar «Acceso a todos los archivos» para EpubFold. " +
+                    "Solo se leen EPUB, PDF y cómics, nada sale del teléfono y tú eliges cuáles añadir.\n\n" +
+                    "Si prefieres no darlo, elige una carpeta concreta."
+            )
+            .setPositiveButton("Abrir Ajustes") { _, _ ->
+                runCatching { allFilesAccess.launch(StorageScan.accessSettingsIntent(this)) }
+            }
+            .setNegativeButton("Elegir carpeta") { _, _ -> folderPicker.launch(null) }
+            .show()
+    }
+
+    private var scanSheet: ScanPickerSheet? = null
+
+    /** Abre la hoja de selección mientras [find] busca; solo se importa lo que se marque. */
+    private fun pickFound(title: String, find: (cancelled: () -> Boolean) -> List<FoundBook>) {
+        val sheet = ScanPickerSheet(this, title,
+            onImport = { chosen ->
+                importMany(chosen.map { b -> { library.import(b.uri).also { StorageScan.markImported(this, b) } } })
+            },
+            onPickFolder = { folderPicker.launch(null) },
+        )
+        scanSheet = sheet
+        val job = lifecycleScope.launch {
+            val found = withContext(Dispatchers.IO) {
+                runCatching { find { !isActive }.also { StorageScan.markKnown(this@LibraryActivity, it) } }
+            }
+            found.onSuccess { sheet.setResults(it) }
+                .onFailure { sheet.setError("No se pudo revisar el almacenamiento: ${it.message ?: "error"}") }
+        }
+        sheet.dialog.setOnDismissListener {
+            if (scanSheet === sheet) scanSheet = null
+            job.cancel()
+        }
+        sheet.show()
     }
 
     /** Importa varios libros seguidos mostrando el avance. */
