@@ -41,7 +41,7 @@ import java.io.File
 /** Fondos de la imagen: la portada desenfocada, su color o una paleta fija. */
 enum class CardBg(val label: String, val paper: Int, val ink: Int) {
     PORTADA("Portada", 0, 0xFFFFFFFF.toInt()),
-    COLOR("Color del libro", 0, 0xFFFFFFFF.toInt()),
+    COLOR("Libro", 0, 0xFFFFFFFF.toInt()),
     PAPEL("Papel", 0xFFF2E9D8.toInt(), 0xFF2B2118.toInt()),
     NOCHE("Noche", 0xFF131315.toInt(), 0xFFEDE6DA.toInt()),
     OCEANO("Océano", 0xFF1D3550.toInt(), 0xFFF2F0EA.toInt()),
@@ -108,7 +108,10 @@ object QuoteCard {
         return ColorUtils.HSLToColor(hsl)
     }
 
-    /** Desenfoque barato: reducir mucho y volver a ampliar con filtrado, en dos pasos. */
+    /**
+     * Portada desenfocada: se reduce a unos 160 px, se aplica un desenfoque de caja en
+     * tres pasadas (casi gaussiano) y se amplía con filtrado, sin escalones visibles.
+     */
     private fun blurred(cover: Bitmap, w: Int, h: Int): Bitmap {
         // Recorte tipo «center crop» a la proporción de la imagen final
         val target = w.toFloat() / h
@@ -116,9 +119,45 @@ object QuoteCard {
         val (cw, ch) = if (srcRatio > target) (cover.height * target).toInt() to cover.height
         else cover.width to (cover.width / target).toInt()
         val crop = Bitmap.createBitmap(cover, (cover.width - cw) / 2, (cover.height - ch) / 2, cw.coerceAtLeast(1), ch.coerceAtLeast(1))
-        val tiny = Bitmap.createScaledBitmap(crop, 18, (18 / target).toInt().coerceAtLeast(1), true)
-        val mid = Bitmap.createScaledBitmap(tiny, 120, (120 / target).toInt(), true)
-        return Bitmap.createScaledBitmap(mid, w, h, true)
+        val sw = 160
+        val sh = (sw / target).toInt().coerceAtLeast(1)
+        val small = Bitmap.createScaledBitmap(crop, sw, sh, true)
+        val px = IntArray(sw * sh)
+        small.getPixels(px, 0, sw, 0, 0, sw, sh)
+        val tmp = IntArray(px.size)
+        repeat(3) {
+            boxBlur(px, tmp, sw, sh, 7, horizontal = true)
+            boxBlur(tmp, px, sw, sh, 7, horizontal = false)
+        }
+        val soft = Bitmap.createBitmap(px, sw, sh, Bitmap.Config.ARGB_8888)
+        return Bitmap.createScaledBitmap(soft, w, h, true)
+    }
+
+    /** Media móvil de radio [r] en una dirección (bordes repetidos). */
+    private fun boxBlur(src: IntArray, dst: IntArray, w: Int, h: Int, r: Int, horizontal: Boolean) {
+        val outer = if (horizontal) h else w
+        val inner = if (horizontal) w else h
+        val div = 2 * r + 1
+        for (o in 0 until outer) {
+            fun at(i: Int): Int {
+                val k = i.coerceIn(0, inner - 1)
+                return if (horizontal) src[o * w + k] else src[k * w + o]
+            }
+            var sr = 0; var sg = 0; var sb = 0
+            for (i in -r..r) {
+                val c = at(i)
+                sr += (c shr 16) and 255; sg += (c shr 8) and 255; sb += c and 255
+            }
+            for (i in 0 until inner) {
+                val v = (0xFF shl 24) or ((sr / div) shl 16) or ((sg / div) shl 8) or (sb / div)
+                if (horizontal) dst[o * w + i] = v else dst[i * w + o] = v
+                val add = at(i + r + 1)
+                val rem = at(i - r)
+                sr += ((add shr 16) and 255) - ((rem shr 16) and 255)
+                sg += ((add shr 8) and 255) - ((rem shr 8) and 255)
+                sb += (add and 255) - (rem and 255)
+            }
+        }
     }
 
     fun render(context: Context, quote: String, note: String, book: BookEntry, cover: Bitmap?, s: Style): Bitmap {
@@ -398,6 +437,12 @@ private class QuoteCardSheet(
         }
 
         redraw()
+        // Que los últimos botones no queden bajo la barra de gestos
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(col) { v, insets ->
+            val nav = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars()).bottom
+            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, ctx.dpi(28) + nav)
+            insets
+        }
         dialog.setContentView(NestedScrollView(ctx).apply { addView(col) })
         dialog.behavior.state = BottomSheetBehavior.STATE_EXPANDED
         dialog.behavior.skipCollapsed = true

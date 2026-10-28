@@ -1138,7 +1138,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
 
     // ---------------------------------------------------------------- temas
 
-    private fun accent() = if (colors.isDark) 0xFFFF9F0A.toInt() else 0xFFFF9500.toInt()
+    private fun accent() = AppAccent.color(this, colors.isDark)
 
     private fun checkAutoTheme() {
         if (prefs.autoTheme == AutoTheme.OFF) return

@@ -129,7 +129,7 @@ class ScrollBookView(context: Context) : RecyclerView(context) {
         val ly = (y - child.top - gap).toInt()
         if (ly < 0) return null
         val line = layout.getLineForVertical(ly)
-        return child.chapter to layout.getOffsetForHorizontal(line, x - m.marginH)
+        return child.chapter to layout.justifiedOffsetForX(line, x - m.marginH, paginator?.justify == true)
     }
 
     fun rangeAnchor(ch: Int, s: Int, e: Int): RectF? {
@@ -224,7 +224,7 @@ class ScrollBookView(context: Context) : RecyclerView(context) {
                 val s1 = h.end.coerceIn(0, len)
                 if (s1 <= s0) continue
                 path.rewind()
-                layout.getSelectionPath(s0, s1, path)
+                layout.justifiedSelectionPath(s0, s1, path, paginator?.justify == true)
                 val col = HIGHLIGHT_COLORS.getOrElse(h.color) { HIGHLIGHT_COLORS[0] }
                 markPaint.color = (col and 0x00FFFFFF) or (if (theme.isDark) 0x5C000000 else 0x66000000)
                 c.drawPath(path, markPaint)
@@ -235,7 +235,7 @@ class ScrollBookView(context: Context) : RecyclerView(context) {
                 val s1 = t.third.coerceIn(0, len)
                 if (s1 <= s0) return
                 path.rewind()
-                layout.getSelectionPath(s0, s1, path)
+                layout.justifiedSelectionPath(s0, s1, path, paginator?.justify == true)
                 markPaint.color = color
                 c.drawPath(path, markPaint)
             }

@@ -50,6 +50,9 @@ import kotlin.math.min
  */
 class ImageReaderActivity : AppCompatActivity() {
 
+    /** Acento elegido en «Apariencia», en su versión oscura (la barra del lector es oscura). */
+    private val accent by lazy { AppAccent.color(this, true) }
+
     private lateinit var library: Library
     private lateinit var entry: BookEntry
     private lateinit var stats: ReadingStats
@@ -197,8 +200,8 @@ class ImageReaderActivity : AppCompatActivity() {
             visibility = View.GONE
         }
         seek = SeekBar(this).apply {
-            progressTintList = ColorStateList.valueOf(ACCENT)
-            thumbTintList = ColorStateList.valueOf(ACCENT)
+            progressTintList = ColorStateList.valueOf(accent)
+            thumbTintList = ColorStateList.valueOf(accent)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar, v: Int, fromUser: Boolean) {
                     if (fromUser) info.text = "Página ${v + 1} de ${book?.pageCount ?: 0}"
@@ -244,8 +247,8 @@ class ImageReaderActivity : AppCompatActivity() {
     }
 
     private fun updateButtons() {
-        btnRtl.imageTintList = ColorStateList.valueOf(if (rtl) ACCENT else 0xFFFFFFFF.toInt())
-        btnSpread.imageTintList = ColorStateList.valueOf(if (spreadMode == 2) ACCENT else 0xFFFFFFFF.toInt())
+        btnRtl.imageTintList = ColorStateList.valueOf(if (rtl) accent else 0xFFFFFFFF.toInt())
+        btnSpread.imageTintList = ColorStateList.valueOf(if (spreadMode == 2) accent else 0xFFFFFFFF.toInt())
     }
 
     private fun chooseSpread() {
@@ -379,7 +382,6 @@ class ImageReaderActivity : AppCompatActivity() {
 
     companion object {
         private const val BG = 0xFF151517.toInt()
-        private const val ACCENT = 0xFFFF9F0A.toInt()
     }
 }
 

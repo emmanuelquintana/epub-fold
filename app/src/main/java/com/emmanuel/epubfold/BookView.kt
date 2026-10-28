@@ -263,6 +263,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         highlightPaint.color = if (theme.isDark) 0x66FFB340 else 0x66FFD60A
         selectionPaint.color = (accentColor and 0x00FFFFFF) or 0x4D000000
         handlePaint.color = accentColor
+        ribbonPaint.color = accentColor
         speakPaint.color = (accentColor and 0x00FFFFFF) or (if (theme.isDark) 0x40000000 else 0x30000000)
         if (theme.texture) {
             val bmp = if (theme.isDark) {
@@ -391,8 +392,8 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
             if (ly < top || ly > layout.getLineBottom(page.endLine - 1)) return null
         }
         val line = layout.getLineForVertical(ly.toInt()).coerceIn(page.startLine, page.endLine - 1)
-        if (strict && (lx < layout.getLineLeft(line) || lx > layout.getLineRight(line))) return null
-        return page.chapter to layout.getOffsetForHorizontal(line, lx)
+        if (strict && (lx < layout.getLineLeft(line) || lx > layout.justifiedLineRight(line, p.justify))) return null
+        return page.chapter to layout.justifiedOffsetForX(line, lx, p.justify)
     }
 
     /** Posición en pantalla del cursor en [offset]: x, arriba, abajo. */
@@ -407,8 +408,8 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
             val o = (if (isEnd) offset - 1 else offset).coerceIn(0, len)
             val line = layout.getLineForOffset(o)
             if (line < page.startLine || line >= page.endLine) continue
-            val x = if (isEnd && offset >= layout.getLineEnd(line)) layout.getLineRight(line)
-            else layout.getPrimaryHorizontal(offset.coerceIn(0, len))
+            val x = if (isEnd && offset >= layout.getLineEnd(line)) layout.justifiedLineRight(line, p.justify)
+            else layout.justifiedX(offset.coerceIn(0, len), p.justify)
             val base = m.marginTop - layout.getLineTop(page.startLine)
             return floatArrayOf(left + m.marginH + x, base + layout.getLineTop(line), base + layout.getLineBottom(line))
         }
@@ -596,7 +597,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                     val s1 = hlt.end.coerceIn(0, len)
                     if (s1 <= s0 || s1 < page.startChar) continue
                     highlightPath.rewind()
-                    layout.getSelectionPath(s0, s1, highlightPath)
+                    layout.justifiedSelectionPath(s0, s1, highlightPath, p.justify)
                     val col = HIGHLIGHT_COLORS.getOrElse(hlt.color) { HIGHLIGHT_COLORS[0] }
                     markPaint.color = (col and 0x00FFFFFF) or (if (theme.isDark) 0x5C000000 else 0x66000000)
                     c.drawPath(highlightPath, markPaint)
@@ -607,7 +608,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                         val s1 = sr.third.coerceIn(0, len)
                         if (s1 > s0) {
                             highlightPath.rewind()
-                            layout.getSelectionPath(s0, s1, highlightPath)
+                            layout.justifiedSelectionPath(s0, s1, highlightPath, p.justify)
                             c.drawPath(highlightPath, speakPaint)
                         }
                     }
@@ -615,7 +616,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                 selection?.let { sel ->
                     if (sel.chapter == page.chapter) {
                         highlightPath.rewind()
-                        layout.getSelectionPath(sel.start.coerceIn(0, len), sel.end.coerceIn(0, len), highlightPath)
+                        layout.justifiedSelectionPath(sel.start.coerceIn(0, len), sel.end.coerceIn(0, len), highlightPath, p.justify)
                         c.drawPath(highlightPath, selectionPaint)
                     }
                 }
@@ -626,7 +627,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                     val s1 = hl.third.coerceIn(0, len)
                     if (s1 > s0) {
                         highlightPath.rewind()
-                        layout.getSelectionPath(s0, s1, highlightPath)
+                        layout.justifiedSelectionPath(s0, s1, highlightPath, p.justify)
                         c.drawPath(highlightPath, highlightPaint)
                     }
                 }

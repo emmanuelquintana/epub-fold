@@ -45,6 +45,14 @@ enum class AppAccent(val label: String, val colorRes: Int, val overlay: Int) {
         fun current(context: Context): AppAccent =
             cached ?: ReaderPrefs(context).accent.also { cached = it }
 
+        /** El acento elegido en su versión clara u oscura (el lector tiene su propio modo). */
+        fun color(context: Context, dark: Boolean): Int {
+            val cfg = android.content.res.Configuration(context.resources.configuration)
+            cfg.uiMode = (cfg.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                (if (dark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO)
+            return context.createConfigurationContext(cfg).getColor(current(context).colorRes)
+        }
+
         fun set(context: Context, a: AppAccent) {
             ReaderPrefs(context).accent = a
             cached = a

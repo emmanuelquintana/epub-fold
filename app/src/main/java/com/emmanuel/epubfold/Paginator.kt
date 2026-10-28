@@ -93,7 +93,7 @@ class Paginator(
     val contentHeight: Int,
     private val lineSpacing: Float,
     private val density: Float,
-    private val justify: Boolean = true,
+    val justify: Boolean = true,
 ) {
     val layouts = arrayOfNulls<StaticLayout>(book.spine.size)
     val pages = ArrayList<Page>()
