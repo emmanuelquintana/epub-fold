@@ -19,7 +19,7 @@ object Backup {
 
     fun export(context: Context, uri: Uri, includeBooks: Boolean) {
         val library = Library(context)
-        val books = library.all()
+        val books = library.everything()
         val json = JSONObject().apply {
             put("version", 1)
             put("created", System.currentTimeMillis())

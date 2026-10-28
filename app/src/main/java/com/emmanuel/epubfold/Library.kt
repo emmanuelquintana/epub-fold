@@ -33,6 +33,12 @@ data class BookEntry(
     val coverLookedUp: Boolean = false,
     /** Estanterías propias (etiquetas) además de Leyendo / Quiero leer / Terminados. */
     val tags: List<String> = emptyList(),
+    /** Huella SHA-1 del archivo original, para detectar el mismo libro con otro nombre. */
+    val hash: String = "",
+    /** Momento en que se movió a la papelera (0 = no está en ella). */
+    val deletedAt: Long = 0L,
+    /** Solo se ve en «Libros privados», tras desbloquear con huella o PIN. */
+    val hidden: Boolean = false,
 ) {
     /** Identificador estable entre dispositivos (mismo libro = mismo título y autor). */
     val key: String get() = bookKey(title, author)
@@ -62,11 +68,27 @@ fun bookKey(title: String, author: String): String {
 /** Biblioteca local: los EPUB se copian a almacenamiento privado y se indexan en JSON. */
 class Library(private val context: Context) {
 
+    companion object {
+        const val TRASH_DAYS = 30
+    }
+
     private val indexFile = File(context.filesDir, "library.json")
     private val booksDir = File(context.filesDir, "books").apply { mkdirs() }
     private val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
 
-    fun all(): List<BookEntry> = load().sortedByDescending { it.lastOpened }
+    /** Libros visibles en la biblioteca (sin papelera ni privados). */
+    fun all(): List<BookEntry> = load().filter { it.deletedAt == 0L && !it.hidden }.sortedByDescending { it.lastOpened }
+
+    /** Todos los libros que tienes, también los privados (copias, sincronización, estadísticas). */
+    fun everything(): List<BookEntry> = load().filter { it.deletedAt == 0L }.sortedByDescending { it.lastOpened }
+
+    fun privateBooks(): List<BookEntry> = everything().filter { it.hidden }
+
+    fun trash(): List<BookEntry> = load().filter { it.deletedAt > 0L }.sortedByDescending { it.deletedAt }
+
+    /** El último [importStream] encontró el libro ya en la biblioteca (o en la papelera). */
+    var lastImportDuplicate = false
+        private set
 
     fun get(id: String): BookEntry? = load().firstOrNull { it.id == id }
 
@@ -88,15 +110,21 @@ class Library(private val context: Context) {
      * para los formatos sin metadatos. Si el libro ya existe, devuelve el existente.
      */
     fun importStream(input: java.io.InputStream, fileName: String? = null): BookEntry {
+        lastImportDuplicate = false
         val id = UUID.randomUUID().toString()
         val raw = File(booksDir, "$id.tmp")
         raw.outputStream().use { input.copyTo(it) }
+        val hash = sha1(raw)
+        findByHash(hash, raw.length())?.let { existing ->
+            raw.delete()
+            return reuse(existing)
+        }
         val kind = runCatching { Formats.detect(raw) }.getOrNull()
         if (kind == null) {
             raw.delete()
             throw IllegalArgumentException("Formato no compatible (usa EPUB, PDF, CBZ o CBR)")
         }
-        if (kind != "epub") return importImageBook(id, raw, kind, fileName)
+        if (kind != "epub") return importImageBook(id, raw, kind, fileName, hash)
         val dest = File(booksDir, "$id.epub")
         raw.renameTo(dest)
 
@@ -104,7 +132,7 @@ class Library(private val context: Context) {
             EpubBook(dest).use { book ->
                 findByKey(bookKey(book.title, book.author))?.let { existing ->
                     dest.delete()
-                    return existing
+                    return reuse(existing)
                 }
                 var cover: String? = null
                 book.coverPath?.let { cp ->
@@ -122,7 +150,7 @@ class Library(private val context: Context) {
                     }
                 }
                 val entry = BookEntry(id, book.title, book.author, dest.absolutePath, cover, 0f,
-                    System.currentTimeMillis(), 0, 0, series = book.series, seriesIndex = book.seriesIndex)
+                    System.currentTimeMillis(), 0, 0, series = book.series, seriesIndex = book.seriesIndex, hash = hash)
                 save(load() + entry)
                 entry
             }
@@ -132,7 +160,7 @@ class Library(private val context: Context) {
         }
     }
 
-    private fun importImageBook(id: String, raw: File, kind: String, fileName: String?): BookEntry {
+    private fun importImageBook(id: String, raw: File, kind: String, fileName: String?, hash: String): BookEntry {
         val dest = File(booksDir, "$id.${if (kind == "pdf") "pdf" else "cbz"}")
         try {
             if (kind == "rar") {
@@ -148,7 +176,7 @@ class Library(private val context: Context) {
             val author = meta?.author.orEmpty()
             findByKey(bookKey(title, author))?.let { existing ->
                 dest.delete()
-                return existing
+                return reuse(existing)
             }
             val cover = Formats.open(format, dest).use { b ->
                 b.render(0, 400, 600)?.let { bmp -> saveCover(id, bmp) }
@@ -156,7 +184,7 @@ class Library(private val context: Context) {
             val entry = BookEntry(
                 id, title, author, dest.absolutePath, cover, 0f, System.currentTimeMillis(), 0, 0,
                 format = format, series = meta?.series.orEmpty(), seriesIndex = meta?.seriesIndex ?: 0f,
-                coverLookedUp = true,
+                coverLookedUp = true, hash = hash,
             )
             save(load() + entry)
             return entry
@@ -165,6 +193,41 @@ class Library(private val context: Context) {
             dest.delete()
             throw e
         }
+    }
+
+    /** Libro ya existente: lo saca de la papelera si estaba allí. */
+    private fun reuse(existing: BookEntry): BookEntry {
+        lastImportDuplicate = true
+        if (existing.deletedAt == 0L) return existing
+        update(existing.id) { it.copy(deletedAt = 0L) }
+        return get(existing.id) ?: existing
+    }
+
+    /**
+     * Busca un libro con el mismo contenido. A los importados antes de guardar la huella
+     * se les calcula solo si su archivo pesa lo mismo, y se guarda para la próxima vez.
+     */
+    private fun findByHash(hash: String, size: Long): BookEntry? {
+        val list = load()
+        list.firstOrNull { it.hash == hash }?.let { return it }
+        return list.filter { it.hash.isEmpty() && File(it.path).length() == size }.firstOrNull { e ->
+            val h = runCatching { sha1(File(e.path)) }.getOrNull() ?: return@firstOrNull false
+            update(e.id) { it.copy(hash = h) }
+            h == hash
+        }
+    }
+
+    private fun sha1(f: File): String {
+        val md = java.security.MessageDigest.getInstance("SHA-1")
+        f.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                md.update(buf, 0, n)
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun saveCover(id: String, bmp: Bitmap): String {
@@ -241,6 +304,20 @@ class Library(private val context: Context) {
         Annotations(context, id).clear()
     }
 
+    /** Lo manda a la papelera: se puede recuperar durante [TRASH_DAYS] días. */
+    fun moveToTrash(id: String) = update(id) { it.copy(deletedAt = System.currentTimeMillis()) }
+
+    fun restore(id: String) = update(id) { it.copy(deletedAt = 0L) }
+
+    fun setHidden(id: String, hidden: Boolean) = update(id) { it.copy(hidden = hidden) }
+
+    /** Borra del todo lo que lleva más de [TRASH_DAYS] días en la papelera. */
+    fun purgeTrash() {
+        val limit = System.currentTimeMillis() - TRASH_DAYS * 86_400_000L
+        trash().filter { it.deletedAt < limit }.forEach { delete(it.id) }
+    }
+
+    /** Borra el libro, sus notas y su portada para siempre. */
     fun delete(id: String) {
         Annotations(context, id).clear()
         java.io.File(java.io.File(context.filesDir, "sketches"), "$id.json").delete()
@@ -268,6 +345,7 @@ class Library(private val context: Context) {
                     BookFormat.of(o.optString("format")), o.optString("series"),
                     o.optDouble("seriesIndex", 0.0).toFloat(), o.optBoolean("coverLookedUp"),
                     o.optJSONArray("tags")?.let { t -> (0 until t.length()).map { t.getString(it) } } ?: emptyList(),
+                    o.optString("hash"), o.optLong("deletedAt"), o.optBoolean("hidden"),
                 )
             }
         } catch (e: Exception) {
@@ -288,6 +366,7 @@ class Library(private val context: Context) {
                 put("format", it.format.name); put("series", it.series)
                 put("seriesIndex", it.seriesIndex.toDouble()); put("coverLookedUp", it.coverLookedUp)
                 put("tags", JSONArray(it.tags))
+                put("hash", it.hash); put("deletedAt", it.deletedAt); put("hidden", it.hidden)
             })
         }
         val tmp = File(indexFile.parentFile, "library.json.tmp")

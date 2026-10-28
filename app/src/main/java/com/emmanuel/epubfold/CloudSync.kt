@@ -166,7 +166,7 @@ object CloudSync {
                 }
             }
             // Libros que aún no están en la nube
-            for (b in library.all()) {
+            for (b in library.everything()) {
                 if (b.key !in remoteKeys) {
                     userDoc(u.uid).collection("books").document(b.key).set(toMap(context, b)).await()
                     pushed++

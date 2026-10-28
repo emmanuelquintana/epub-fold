@@ -23,6 +23,10 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.slider.Slider
 import java.io.File
@@ -269,61 +273,149 @@ class StatsActivity : AppCompatActivity() {
             setMargins(dpi(16), dpi(4), dpi(16), dpi(12))
         })
 
-        // --- Libros del año
+        // --- Reto del año (libros terminados aquí + historial importado de Goodreads)
         spacer(22)
         val year = Calendar.getInstance().get(Calendar.YEAR)
-        val finished = library.all().filter {
+        val finished = library.everything().filter {
             it.finishedAt > 0L && Calendar.getInstance().apply { timeInMillis = it.finishedAt }.get(Calendar.YEAR) == year
         }.sortedBy { it.finishedAt }
-        caption("Libros terminados en $year")
+        val history = Goodreads.all(this)
+        val keys = finished.map { it.key }.toHashSet()
+        val outside = history.filter { it.year == year && it.key !in keys }.sortedBy { it.readAt }
+        val done = finished.size + outside.size
+        caption("Reto $year")
         val booksCard = card()
         val yGoal = prefs.yearlyGoalBooks
         booksCard.addView(TextView(this).apply {
-            text = "${finished.size} de $yGoal"
+            text = "$done de $yGoal libros"
             setTextAppearance(R.style.Text_Title2)
             setPadding(dpi(16), dpi(14), dpi(16), 0)
         })
         val progress = com.google.android.material.progressindicator.LinearProgressIndicator(this).apply {
             max = yGoal.coerceAtLeast(1)
-            this.progress = min(finished.size, yGoal)
+            this.progress = min(done, yGoal)
             setIndicatorColor(color(R.color.accent))
             trackColor = color(R.color.fill)
             trackThickness = dpi(6)
             trackCornerRadius = dpi(3)
         }
         booksCard.addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            setMargins(dpi(16), dpi(10), dpi(16), dpi(8))
+            setMargins(dpi(16), dpi(10), dpi(16), dpi(6))
         })
-        if (finished.isEmpty()) {
+        booksCard.addView(TextView(this).apply {
+            text = paceText(done, yGoal)
+            setTextAppearance(R.style.Text_Subhead)
+            setPadding(dpi(16), 0, dpi(16), dpi(10))
+        })
+        if (done == 0) {
             booksCard.addView(TextView(this).apply {
                 text = "Cuando termines un libro aparecerá aquí."
-                setTextAppearance(R.style.Text_Subhead)
-                setPadding(dpi(16), 0, dpi(16), dpi(16))
+                setTextAppearance(R.style.Text_Footnote)
+                setPadding(dpi(16), 0, dpi(16), dpi(8))
             })
         } else {
             val hs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
             val covers = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                setPadding(dpi(16), dpi(6), dpi(16), dpi(16))
+                setPadding(dpi(16), dpi(2), dpi(16), dpi(8))
             }
             finished.forEach { b ->
-                val cv = CardView(this).apply {
-                    radius = dp(5f)
-                    cardElevation = dp(4f)
-                    useCompatPadding = true
-                }
-                val iv = ImageView(this).apply {
+                val cv = coverCard()
+                cv.addView(ImageView(this).apply {
                     scaleType = ImageView.ScaleType.CENTER_CROP
                     setBackgroundResource(R.drawable.cover_placeholder)
                     b.coverPath?.let { p -> if (File(p).exists()) setImageBitmap(BitmapFactory.decodeFile(p)) }
                     contentDescription = b.title
-                }
-                cv.addView(iv)
+                })
+                covers.addView(cv, LinearLayout.LayoutParams(dpi(66), dpi(100)))
+            }
+            // Leídos fuera de la app: portada de texto con el título
+            outside.forEach { r ->
+                val cv = coverCard()
+                cv.addView(TextView(this).apply {
+                    text = r.title
+                    setBackgroundResource(R.drawable.cover_placeholder)
+                    setTextColor(0xFFFFFFFF.toInt())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                    maxLines = 5
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    gravity = Gravity.CENTER
+                    setPadding(dpi(5), dpi(5), dpi(5), dpi(5))
+                })
                 covers.addView(cv, LinearLayout.LayoutParams(dpi(66), dpi(100)))
             }
             hs.addView(covers)
             booksCard.addView(hs)
         }
+        val past = history.groupBy { it.year }.filterKeys { it < year }.toSortedMap(compareByDescending { it })
+        if (past.isNotEmpty()) {
+            booksCard.addView(TextView(this).apply {
+                text = "Años anteriores: " + past.entries.take(4).joinToString(" · ") { (y, l) -> "$y, ${l.size} libros" }
+                setTextAppearance(R.style.Text_Footnote)
+                setPadding(dpi(16), dpi(2), dpi(16), dpi(4))
+            })
+        }
+        booksCard.addView(TextView(this).apply {
+            text = if (history.isEmpty()) "Importar historial de Goodreads…" else "Volver a importar de Goodreads…"
+            setTextColor(color(R.color.accent))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setPadding(dpi(16), dpi(10), dpi(16), dpi(14))
+            setOnClickListener { explainGoodreads() }
+        })
+    }
+
+    private fun coverCard() = CardView(this).apply {
+        radius = dp(5f)
+        cardElevation = dp(4f)
+        useCompatPadding = true
+    }
+
+    /** Cómo vas respecto al ritmo que pide el reto a estas alturas del año. */
+    private fun paceText(done: Int, goal: Int): String {
+        if (done >= goal) return "Reto cumplido. Lo que leas ahora es extra."
+        val c = Calendar.getInstance()
+        val day = c.get(Calendar.DAY_OF_YEAR)
+        val days = c.getActualMaximum(Calendar.DAY_OF_YEAR)
+        val expected = (goal.toLong() * day / days).toInt()
+        val diff = done - expected
+        fun libros(n: Int) = if (n == 1) "1 libro" else "$n libros"
+        val pace = when {
+            diff > 0 -> "Vas ${libros(diff)} por delante del ritmo"
+            diff == 0 -> "Vas al día con tu reto"
+            else -> "Te faltan ${libros(-diff)} para ir al ritmo"
+        }
+        val left = goal - done
+        val every = (days - day + 1) / left
+        return if (every >= 1) "$pace · uno cada $every días para lograrlo" else pace
+    }
+
+    private val goodreadsPicker = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@registerForActivityResult
+        lifecycleScope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { Goodreads.import(this@StatsActivity, uri) } }
+            r.onSuccess { n ->
+                android.widget.Toast.makeText(this@StatsActivity,
+                    if (n == 0) "No había libros leídos nuevos" else if (n == 1) "1 libro leído importado" else "$n libros leídos importados",
+                    android.widget.Toast.LENGTH_LONG).show()
+                build()
+            }.onFailure {
+                android.widget.Toast.makeText(this@StatsActivity, it.message ?: "No se pudo importar", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun explainGoodreads() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Historial de Goodreads")
+            .setMessage(
+                "En goodreads.com, abre Mis libros › Importar y exportar › Exportar biblioteca y descarga el archivo CSV. " +
+                    "Después elígelo aquí: los libros leídos de cada año cuentan para tus retos."
+            )
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Elegir archivo") { _, _ ->
+                runCatching { goodreadsPicker.launch(arrayOf("text/csv", "text/comma-separated-values", "text/*", "application/octet-stream")) }
+            }
+            .show()
     }
 
     private fun card(): LinearLayout {
@@ -378,8 +470,8 @@ class StatsActivity : AppCompatActivity() {
             valueFrom = 1f; valueTo = 100f; stepSize = 1f
             value = prefs.yearlyGoalBooks.toFloat().coerceIn(1f, 100f)
         }
-        yearLabel.text = "Libros al año: ${yearly.value.toInt()}"
-        yearly.addOnChangeListener { _, v, _ -> yearLabel.text = "Libros al año: ${v.toInt()}" }
+        yearLabel.text = "Reto anual: ${yearly.value.toInt()} libros"
+        yearly.addOnChangeListener { _, v, _ -> yearLabel.text = "Reto anual: ${v.toInt()} libros" }
         box.addView(dailyLabel); box.addView(daily); box.addView(yearLabel); box.addView(yearly)
         MaterialAlertDialogBuilder(this)
             .setTitle("Metas de lectura")

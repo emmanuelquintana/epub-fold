@@ -115,7 +115,7 @@ class WrappedActivity : AppCompatActivity() {
 
     private fun buildCards(year: Int): List<Card> {
         val stats = ReadingStats(this)
-        val library = Library(this).all()
+        val library = Library(this).everything()
         val prefs = ReaderPrefs(this)
         fun inYear(t: Long) = t > 0 && Calendar.getInstance().apply { timeInMillis = t }.get(Calendar.YEAR) == year
 

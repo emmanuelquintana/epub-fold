@@ -132,7 +132,7 @@ object StorageScan {
     /** Señala los que ya se importaron antes o cuyo título coincide con uno de la biblioteca. */
     fun markKnown(context: Context, found: List<FoundBook>) {
         val imported = prefs(context).getStringSet("imported", emptySet()) ?: emptySet()
-        val titles = Library(context).all().map { fold(it.title) }.filter { it.length >= 6 }
+        val titles = Library(context).everything().map { fold(it.title) }.filter { it.length >= 6 }
         found.forEach { b ->
             val name = fold(b.title)
             b.inLibrary = b.key in imported || titles.any { name.contains(it) }

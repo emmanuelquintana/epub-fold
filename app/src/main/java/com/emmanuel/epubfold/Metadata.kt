@@ -43,7 +43,7 @@ object Metadata {
     fun fillMissingCovers(context: Context): Int {
         val library = Library(context)
         var found = 0
-        library.all().filter { it.coverPath == null && !it.coverLookedUp }.take(10).forEach { b ->
+        library.everything().filter { it.coverPath == null && !it.coverLookedUp }.take(10).forEach { b ->
             val bytes = runCatching { findCover(b.title, b.author) }.getOrNull()
             if (bytes != null && library.setCover(b.id, bytes)) found++ else library.markCoverLookedUp(b.id)
         }

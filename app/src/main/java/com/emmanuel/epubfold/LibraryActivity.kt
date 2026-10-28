@@ -155,6 +155,7 @@ class LibraryActivity : AppCompatActivity() {
         findViewById<View>(R.id.appearance).setOnClickListener { showAppearance(animate = true) }
         handleIntent(intent)
         if (savedInstanceState?.getBoolean("appearance") == true) showAppearance(animate = false)
+        lifecycleScope.launch(Dispatchers.IO) { runCatching { library.purgeTrash() } }
     }
 
     /** Tras un cambio de apariencia la pantalla se recrea; la hoja vuelve a abrirse. */
@@ -171,6 +172,7 @@ class LibraryActivity : AppCompatActivity() {
             reopenAppearance = true
             sheet.dialog.window?.setWindowAnimations(0)
             sheet.dialog.dismiss()
+            Widgets.updateAll(this)
             if (recreateNow) recreate()
         }
         sheet.show(animate)
@@ -261,24 +263,27 @@ class LibraryActivity : AppCompatActivity() {
             .show()
         lifecycleScope.launch {
             var ok = 0
+            var dup = 0
             val failed = ArrayList<String>()
             jobs.forEachIndexed { i, job ->
                 val r = withContext(Dispatchers.IO) { runCatching { job() } }
-                r.onSuccess { ok++ }.onFailure { failed += (it.message ?: "error") }
+                r.onSuccess { if (library.lastImportDuplicate) dup++ else ok++ }.onFailure { failed += (it.message ?: "error") }
                 dialog.setMessage("${i + 1} de ${jobs.size}")
                 if (i % 5 == 4) refresh()
             }
             dialog.dismiss()
             refresh()
             autoCovers()
-            val msg = "$ok libros añadidos" + if (failed.isNotEmpty()) " · ${failed.size} no se pudieron abrir" else ""
+            val msg = (if (ok == 1) "1 libro añadido" else "$ok libros añadidos") +
+                (if (dup > 0) " · $dup ya estaban en tu biblioteca" else "") +
+                if (failed.isNotEmpty()) " · ${failed.size} no se pudieron abrir" else ""
             Toast.makeText(this@LibraryActivity, msg, Toast.LENGTH_LONG).show()
         }
     }
 
     /** Busca en Open Library portadas para los libros que no tienen. */
     private fun autoCovers() {
-        if (library.all().none { it.coverPath == null && !it.coverLookedUp }) return
+        if (library.everything().none { it.coverPath == null && !it.coverLookedUp }) return
         lifecycleScope.launch {
             val n = withContext(Dispatchers.IO) { runCatching { Metadata.fillMissingCovers(this@LibraryActivity) }.getOrDefault(0) }
             if (n > 0) {
@@ -341,8 +346,11 @@ class LibraryActivity : AppCompatActivity() {
 
     private val filters = listOf("Todos", "Leyendo", "Quiero leer", "Terminados")
 
+    /** Libros privados desbloqueados (se vuelven a bloquear al salir de la app). */
+    private var privateMode = false
+
     private fun refresh() {
-        val all = library.all()
+        val all = if (privateMode) library.privateBooks() else library.all()
         val sorted = when (prefs.librarySort) {
             LibrarySort.RECENT -> all
             LibrarySort.TITLE -> all.sortedBy { it.title.lowercase() }
@@ -353,7 +361,7 @@ class LibraryActivity : AppCompatActivity() {
             )
         }
         val q = query.trim().lowercase()
-        val shelf = prefs.libraryShelf
+        val shelf = if (privateMode) "all" else prefs.libraryShelf
         val filtered = sorted.filter { b ->
             val shelfOk = when {
                 shelf == "reading" -> b.collection == Shelf.READING
@@ -365,7 +373,7 @@ class LibraryActivity : AppCompatActivity() {
             shelfOk && (q.isEmpty() || b.title.lowercase().contains(q) || b.author.lowercase().contains(q) ||
                 b.series.lowercase().contains(q))
         }
-        val hero = if (q.isEmpty() && shelf == "all")
+        val hero = if (q.isEmpty() && shelf == "all" && !privateMode)
             all.firstOrNull { it.collection == Shelf.READING } else null
         adapter.submit(filtered, hero, all.size)
     }
@@ -376,6 +384,9 @@ class LibraryActivity : AppCompatActivity() {
             val result = runCatching { withContext(Dispatchers.IO) { library.import(uri) } }
             progress.visibility = View.GONE
             result.onSuccess {
+                if (library.lastImportDuplicate) {
+                    Toast.makeText(this@LibraryActivity, "«${it.title}» ya estaba en tu biblioteca", Toast.LENGTH_SHORT).show()
+                }
                 refresh()
                 CloudSync.pullOne(this@LibraryActivity, it.id) { refresh() }
                 autoCovers()
@@ -494,6 +505,9 @@ class LibraryActivity : AppCompatActivity() {
             menu.add(0, 6, 5, "Exportar notas (Obsidian, Readwise, Notion)")
             menu.add(0, 7, 6, "Carpeta de entrada…")
             menu.add(0, 8, 7, "Recordatorio diario…")
+            menu.add(0, 9, 8, if (privateMode) "Bloquear libros privados" else "Libros privados…")
+            val inTrash = library.trash().size
+            menu.add(0, 10, 9, if (inTrash > 0) "Papelera ($inTrash)" else "Papelera")
             setOnMenuItemClickListener {
                 when (it.itemId) {
                     1 -> searchEverything()
@@ -504,11 +518,117 @@ class LibraryActivity : AppCompatActivity() {
                     6 -> startActivity(Intent(this@LibraryActivity, IntegrationsActivity::class.java))
                     7 -> inboxSettings()
                     8 -> reminderSettings()
+                    9 -> if (privateMode) lockPrivate() else unlockPrivate()
+                    10 -> showTrash()
                 }
                 true
             }
             show()
         }
+    }
+
+    // ---------------------------------------------------------------- privados y papelera
+
+    private fun unlockPrivate() {
+        if (library.privateBooks().isEmpty()) {
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("Libros privados")
+                .setMessage("Mantén pulsado un libro y elige «Mover a privados». Desaparecerá de la biblioteca, " +
+                    "de los widgets y de los recuerdos, y solo se verá aquí tras desbloquear con tu huella o PIN.")
+                .setPositiveButton("Entendido", null)
+                .show()
+            return
+        }
+        val auth = androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK or
+            androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        if (androidx.biometric.BiometricManager.from(this).canAuthenticate(auth) != androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS) {
+            Toast.makeText(this, "Configura un bloqueo de pantalla (huella o PIN) para proteger tus libros privados", Toast.LENGTH_LONG).show()
+            return
+        }
+        val prompt = androidx.biometric.BiometricPrompt(this, androidx.core.content.ContextCompat.getMainExecutor(this),
+            object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
+                    privateMode = true
+                    refresh()
+                    list.scrollToPosition(0)
+                }
+            })
+        prompt.authenticate(
+            androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Libros privados")
+                .setSubtitle("Desbloquea para verlos")
+                .setAllowedAuthenticators(auth)
+                .build()
+        )
+    }
+
+    private fun lockPrivate() {
+        if (!privateMode) return
+        privateMode = false
+        refresh()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Al salir de la app (o abrir un libro) los privados se vuelven a bloquear
+        if (privateMode && !isChangingConfigurations) {
+            privateMode = false
+            refresh()
+        }
+    }
+
+    private fun showTrash() {
+        val sheet = ListSheet(this, "Papelera")
+        val empty = TextView(this).apply {
+            text = "Vaciar papelera"
+            setTextColor(0xFFFF3B30.toInt())
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15f)
+            setPadding(dpi(4), dpi(4), dpi(4), dpi(4))
+        }
+        sheet.headerBox.addView(empty, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.END))
+        fun load() {
+            val items = library.trash()
+            empty.visibility = if (items.isEmpty()) View.GONE else View.VISIBLE
+            sheet.setStatus(if (items.isEmpty()) "La papelera está vacía."
+            else "Se borran para siempre a los ${Library.TRASH_DAYS} días. Toca uno para recuperarlo.")
+            val now = System.currentTimeMillis()
+            sheet.adapter.rows = items.map { b ->
+                val left = Library.TRASH_DAYS - ((now - b.deletedAt) / 86_400_000L).toInt()
+                SheetRow(b.title, caption = b.author.ifEmpty { null },
+                    trailing = if (left <= 1) "Último día" else "$left días") {
+                    com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                        .setTitle(b.title)
+                        .setPositiveButton("Recuperar") { _, _ ->
+                            library.restore(b.id)
+                            load()
+                            refresh()
+                            Widgets.updateAll(this)
+                        }
+                        .setNeutralButton("Borrar para siempre") { _, _ ->
+                            library.delete(b.id)
+                            load()
+                        }
+                        .setNegativeButton("Cancelar", null)
+                        .show()
+                }
+            }
+        }
+        empty.setOnClickListener {
+            val n = library.trash().size
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("¿Vaciar la papelera?")
+                .setMessage(if (n == 1) "Se borrará 1 libro con sus notas. No se puede deshacer."
+                else "Se borrarán $n libros con sus notas. No se puede deshacer.")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Vaciar") { _, _ ->
+                    library.trash().forEach { library.delete(it.id) }
+                    load()
+                }
+                .show()
+        }
+        load()
+        sheet.show()
     }
 
     /** Busca en subrayados, notas y cuadernos de todos los libros. */
@@ -717,18 +837,32 @@ class LibraryActivity : AppCompatActivity() {
             menu.add(0, 7, 4, if (entry.series.isEmpty()) "Añadir a una serie…" else "Serie: ${entry.series}…")
             menu.add(0, 9, 4, if (entry.tags.isEmpty()) "Estanterías…" else "Estanterías: ${entry.tags.joinToString(", ")}…")
             menu.add(0, 8, 5, "Buscar portada en internet")
-            menu.add(0, 3, 6, "Quitar de la biblioteca")
+            menu.add(0, 10, 6, if (entry.hidden) "Quitar de privados" else "Mover a privados")
+            menu.add(0, 3, 7, "Mover a la papelera")
             setOnMenuItemClickListener {
                 when (it.itemId) {
                     1 -> openBook(entry)
                     2 -> { library.resetProgress(entry.id); refresh() }
                     3 -> {
-                        androidx.appcompat.app.AlertDialog.Builder(this@LibraryActivity)
-                            .setTitle("¿Quitar «${entry.title}»?")
-                            .setMessage("Se borrarán el libro, sus marcadores y notas de este dispositivo.")
-                            .setNegativeButton("Cancelar", null)
-                            .setPositiveButton("Quitar") { _, _ -> library.delete(entry.id); refresh() }
+                        library.moveToTrash(entry.id)
+                        refresh()
+                        Widgets.updateAll(this@LibraryActivity)
+                        com.google.android.material.snackbar.Snackbar
+                            .make(findViewById(R.id.root), "«${entry.title}» está en la papelera", com.google.android.material.snackbar.Snackbar.LENGTH_LONG)
+                            .setAction("Deshacer") {
+                                library.restore(entry.id)
+                                refresh()
+                                Widgets.updateAll(this@LibraryActivity)
+                            }
+                            .setActionTextColor(color(R.color.accent))
                             .show()
+                    }
+                    10 -> {
+                        library.setHidden(entry.id, !entry.hidden)
+                        refresh()
+                        Widgets.updateAll(this@LibraryActivity)
+                        if (!entry.hidden) Toast.makeText(this@LibraryActivity,
+                            "«${entry.title}» está en Libros privados (menú ⋯)", Toast.LENGTH_LONG).show()
                     }
                     4 -> { library.setShelf(entry.id, ""); refresh() }
                     5 -> { library.setShelf(entry.id, "want"); refresh() }
@@ -883,6 +1017,11 @@ class LibraryActivity : AppCompatActivity() {
         /** Estanterías como chips: las de siempre, las tuyas y «+». */
         fun bindChips() {
             chips.removeAllViews()
+            if (privateMode) {
+                chips.addView(chip("Privados", true) {})
+                chips.addView(chip("Bloquear", false) { lockPrivate() })
+                return
+            }
             val keys = listOf("all", "reading", "want", "finished") + library.allTags().map { "tag:$it" }
             if (prefs.libraryShelf !in keys) prefs.libraryShelf = "all"
             keys.forEach { k ->
@@ -898,7 +1037,7 @@ class LibraryActivity : AppCompatActivity() {
         }
 
         fun bindDaily() {
-            val m = if (query.isEmpty() && prefs.libraryShelf == "all") Review.pick(memories, dailySkip) else null
+            val m = if (query.isEmpty() && prefs.libraryShelf == "all" && !privateMode) Review.pick(memories, dailySkip) else null
             if (m == null) {
                 daily.visibility = View.GONE
                 return

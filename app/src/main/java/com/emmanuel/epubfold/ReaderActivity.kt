@@ -944,7 +944,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
 
     private fun showFinished() {
         val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
-        val done = library.all().count {
+        val done = library.everything().count {
             it.finishedAt > 0L && java.util.Calendar.getInstance().apply { timeInMillis = it.finishedAt }
                 .get(java.util.Calendar.YEAR) == year
         } + 1

@@ -59,6 +59,11 @@ class ContinueWidget : AppWidgetProvider() {
             val all = Library(context).all()
             val book = all.firstOrNull { it.collection == Shelf.READING } ?: all.firstOrNull()
             val v = RemoteViews(context.packageName, R.layout.widget_continue)
+            val accent = context.color(R.color.accent)
+            v.setTextColor(R.id.wLabel, accent)
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                v.setColorStateList(R.id.wProgress, "setProgressTintList", android.content.res.ColorStateList.valueOf(accent))
+            }
             if (book == null) {
                 v.setTextViewText(R.id.wTitle, "Tu biblioteca está vacía")
                 v.setTextViewText(R.id.wAuthor, "Toca para añadir un libro")
@@ -90,6 +95,7 @@ class MemoryWidget : AppWidgetProvider() {
             if (ids.isEmpty()) return
             val m = Review.ofTheDay(context)
             val v = RemoteViews(context.packageName, R.layout.widget_memory)
+            v.setTextColor(R.id.wLabel, context.color(R.color.accent))
             if (m == null) {
                 v.setTextViewText(R.id.wQuote, "Subraya frases mientras lees y aquí aparecerá una cada día.")
                 v.setTextViewText(R.id.wSource, "EpubFold")
