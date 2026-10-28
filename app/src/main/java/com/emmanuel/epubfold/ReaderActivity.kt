@@ -468,7 +468,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             finishSelection()
             shareText("“${text.trim()}”\n\n— ${entry.title}${if (entry.author.isNotEmpty()) ", ${entry.author}" else ""}")
         }
-        actions += "Tarjeta" to {
+        actions += "Imagen" to {
             finishSelection()
             QuoteCard.share(this, text, "", entry)
         }
@@ -494,9 +494,9 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             val noteText = if (h.note.isNotBlank()) "\n\nNota: ${h.note}" else ""
             shareText("“${h.text.trim()}”$noteText\n\n— ${entry.title}")
         }
-        actions += "Tarjeta" to {
+        actions += "Imagen" to {
             selectionMenu.dismiss()
-            QuoteCard.share(this, h.text, h.note, entry, HIGHLIGHT_COLORS.getOrElse(h.color) { HIGHLIGHT_COLORS[0] })
+            QuoteCard.share(this, h.text, h.note, entry)
         }
         actions += "Borrar" to {
             selectionMenu.dismiss()
