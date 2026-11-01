@@ -171,7 +171,7 @@ class Library(private val context: Context) {
             }
             val format = if (kind == "pdf") BookFormat.PDF else BookFormat.CBZ
             val meta = if (format == BookFormat.CBZ) Formats.comicInfo(dest) else null
-            val baseName = fileName?.substringBeforeLast('.')?.replace('_', ' ')?.trim()?.ifEmpty { null }
+            val baseName = fileName?.let { cleanBookTitle(it) }?.ifEmpty { null }
             val title = meta?.title ?: baseName ?: "Sin título"
             val author = meta?.author.orEmpty()
             findByKey(bookKey(title, author))?.let { existing ->
@@ -337,7 +337,7 @@ class Library(private val context: Context) {
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
                 BookEntry(
-                    o.getString("id"), o.optString("title"), o.optString("author"),
+                    o.getString("id"), cleanBookTitle(o.optString("title")), o.optString("author"),
                     o.getString("path"), o.optString("cover").ifEmpty { null },
                     o.optDouble("progress", 0.0).toFloat(), o.optLong("lastOpened"),
                     o.optInt("chapter"), o.optInt("charOffset"),

@@ -11,6 +11,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
@@ -60,6 +61,29 @@ class LibraryActivity : AppCompatActivity() {
     }
 
     private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
+    /** Libro al que se le pondrá la imagen elegida en la galería. */
+    private var coverTargetId: String? = null
+
+    private val coverImagePicker = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val id = coverTargetId ?: return@registerForActivityResult
+        uri ?: return@registerForActivityResult
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    contentResolver.openInputStream(uri)?.use { it.readBytes() }?.let { library.setCover(id, it) } ?: false
+                }.getOrDefault(false)
+            }
+            if (ok) {
+                coverCache.evictAll()
+                refresh()
+                Widgets.updateAll(this@LibraryActivity)
+                CloudSync.schedulePush(this@LibraryActivity, id)
+            } else {
+                Toast.makeText(this@LibraryActivity, "No se pudo usar esa imagen", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
         tree ?: return@registerForActivityResult
@@ -810,20 +834,54 @@ class LibraryActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun findCover(entry: BookEntry) {
-        Toast.makeText(this, "Buscando portada…", Toast.LENGTH_SHORT).show()
-        lifecycleScope.launch {
-            val ok = withContext(Dispatchers.IO) {
-                runCatching { Metadata.findCover(entry.title, entry.author)?.let { library.setCover(entry.id, it) } ?: false }
-                    .getOrDefault(false)
-            }
-            if (ok) {
+    /** Hoja para elegir portada: páginas del libro, sugerencias de internet o la galería. */
+    private fun changeCover(entry: BookEntry) {
+        CoverPickerSheet(this, lifecycleScope, entry,
+            onPickFromGallery = {
+                coverTargetId = entry.id
+                coverImagePicker.launch(
+                    androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            },
+            onChanged = {
                 coverCache.evictAll()
                 refresh()
-            } else {
-                Toast.makeText(this@LibraryActivity, "No se encontró portada en Open Library", Toast.LENGTH_LONG).show()
-            }
+                Widgets.updateAll(this)
+            },
+        ).show()
+    }
+
+    private fun editTitle(entry: BookEntry) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpi(22), dpi(8), dpi(22), 0)
         }
+        fun field(hint: String, value: String) = android.widget.EditText(this).apply {
+            this.hint = hint
+            setText(value)
+            setSingleLine()
+            background = roundRect(color(R.color.fill), dp(10f))
+            setPadding(dpi(12), dpi(11), dpi(12), dpi(11))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { topMargin = dpi(8) }
+        }
+        val title = field("Título", entry.title)
+        val author = field("Autor", entry.author)
+        box.addView(title)
+        box.addView(author)
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Título y autor")
+            .setView(box)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Guardar") { _, _ ->
+                val t = title.text.toString().trim()
+                if (t.isNotEmpty()) {
+                    library.update(entry.id) { it.copy(title = t, author = author.text.toString().trim()) }
+                    refresh()
+                    Widgets.updateAll(this)
+                }
+            }
+            .show()
     }
 
     private fun showBookMenu(anchor: View, entry: BookEntry) {
@@ -836,7 +894,8 @@ class LibraryActivity : AppCompatActivity() {
             menu.add(0, 2, 3, "Marcar como no leído")
             menu.add(0, 7, 4, if (entry.series.isEmpty()) "Añadir a una serie…" else "Serie: ${entry.series}…")
             menu.add(0, 9, 4, if (entry.tags.isEmpty()) "Estanterías…" else "Estanterías: ${entry.tags.joinToString(", ")}…")
-            menu.add(0, 8, 5, "Buscar portada en internet")
+            menu.add(0, 8, 5, "Cambiar portada…")
+            menu.add(0, 11, 5, "Editar título y autor…")
             menu.add(0, 10, 6, if (entry.hidden) "Quitar de privados" else "Mover a privados")
             menu.add(0, 3, 7, "Mover a la papelera")
             setOnMenuItemClickListener {
@@ -869,7 +928,8 @@ class LibraryActivity : AppCompatActivity() {
                     6 -> { library.markFinished(entry.id); refresh() }
                     7 -> editSeries(entry)
                     9 -> chooseShelves(entry)
-                    8 -> findCover(entry)
+                    8 -> changeCover(entry)
+                    11 -> editTitle(entry)
                 }
                 CloudSync.schedulePush(this@LibraryActivity, entry.id)
                 true
