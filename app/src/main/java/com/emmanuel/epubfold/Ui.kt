@@ -14,7 +14,8 @@ fun Context.dp(v: Float): Float = v * resources.displayMetrics.density
 fun Context.dpi(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 /** El acento se resuelve al color elegido en «Apariencia»; el resto, tal cual. */
 fun Context.color(id: Int): Int =
-    ContextCompat.getColor(this, if (id == R.color.accent) AppAccent.current(this).colorRes else id)
+    LibraryTheme.override(this, id)
+        ?: ContextCompat.getColor(this, if (id == R.color.accent) AppAccent.current(this).colorRes else id)
 
 fun roundRect(color: Int, radius: Float, strokeColor: Int = 0, strokeWidth: Int = 0) =
     GradientDrawable().apply {

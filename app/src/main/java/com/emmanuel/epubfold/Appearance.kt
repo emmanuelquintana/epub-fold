@@ -80,8 +80,14 @@ class App : Application() {
         super.onCreate()
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
-                val a = AppAccent.current(activity)
+                // Con un tema de estantería, los controles de Android usan el acento predefinido más parecido
+                val a = LibraryTheme.current(activity)?.nearestAccent ?: AppAccent.current(activity)
                 if (a.overlay != 0) activity.theme.applyStyle(a.overlay, true)
+                if (activity !is ReaderActivity && activity !is ImageReaderActivity) {
+                    LibraryTheme.override(activity, R.color.bg_grouped)?.let {
+                        activity.window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(it))
+                    }
+                }
             }
             override fun onActivityStarted(activity: Activity) {}
             override fun onActivityResumed(activity: Activity) {}
@@ -164,6 +170,12 @@ class AppearanceSheet(
             setPadding(ctx.dpi(16), 0, ctx.dpi(16), ctx.dpi(14))
         })
 
+        // --- Tema desde un libro (colores de una portada para toda la estantería)
+        col.addView(View(ctx), LinearLayout.LayoutParams(1, ctx.dpi(24)))
+        col.addView(caption("Tema desde un libro"))
+        val themeGroup = group(col)
+        buildLibraryThemes(themeGroup)
+
         val scroll = NestedScrollView(ctx).apply { addView(col) }
         dialog.setContentView(scroll)
         dialog.behavior.state = BottomSheetBehavior.STATE_EXPANDED
@@ -171,6 +183,144 @@ class AppearanceSheet(
         dialog.behavior.maxWidth = ctx.dpi(680)
         if (!animate) dialog.window?.setWindowAnimations(0)
         dialog.show()
+    }
+
+    private fun buildLibraryThemes(g: LinearLayout) {
+        val active = LibraryTheme.current(ctx)
+        g.addView(TextView(ctx).apply {
+            setTextAppearance(R.style.Text_Footnote)
+            text = if (active != null) "Ahora: ${active.name}. Elige otra portada o quítalo."
+            else "Elige una portada: la biblioteca toma su fondo y su color, en claro u oscuro."
+            setPadding(ctx.dpi(16), ctx.dpi(14), ctx.dpi(16), ctx.dpi(6))
+        })
+        val books = Library(ctx).all().filter { it.coverPath != null && java.io.File(it.coverPath).exists() }
+        val previews = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(ctx.dpi(12), 0, ctx.dpi(12), ctx.dpi(12))
+        }
+        val covers = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(ctx.dpi(12), ctx.dpi(4), ctx.dpi(12), ctx.dpi(8))
+        }
+        fun showFor(b: BookEntry) {
+            val bmp = BookThemes.loadCover(b.coverPath) ?: return
+            previews.removeAllViews()
+            LibraryTheme.generate(bmp, b.title).forEach { t ->
+                previews.addView(themePreview(t, b),
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        setMargins(ctx.dpi(4), 0, ctx.dpi(4), 0)
+                    })
+            }
+        }
+        books.forEach { b ->
+            val w = ctx.dpi(58)
+            covers.addView(androidx.cardview.widget.CardView(ctx).apply {
+                radius = ctx.dp(5f)
+                cardElevation = ctx.dp(3f)
+                useCompatPadding = true
+                contentDescription = b.title
+                addView(android.widget.ImageView(ctx).apply {
+                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                    setImageBitmap(BookThemes.loadCover(b.coverPath))
+                }, ViewGroup.LayoutParams(w, w * 3 / 2))
+                setOnClickListener {
+                    performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                    showFor(b)
+                }
+            })
+        }
+        if (books.isEmpty()) {
+            g.addView(TextView(ctx).apply {
+                setTextAppearance(R.style.Text_Subhead)
+                text = "Ningún libro tiene portada todavía."
+                setPadding(ctx.dpi(16), 0, ctx.dpi(16), ctx.dpi(14))
+            })
+            return
+        }
+        g.addView(HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(covers)
+        })
+        g.addView(previews)
+        (books.firstOrNull { it.title == active?.source } ?: books.first()).let { showFor(it) }
+        if (active != null) {
+            g.addView(hairline(ctx, ctx.dpi(16)))
+            g.addView(TextView(ctx).apply {
+                text = "Quitar tema del libro"
+                setTextColor(0xFFFF3B30.toInt())
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 17f)
+                setPadding(ctx.dpi(16), ctx.dpi(14), ctx.dpi(16), ctx.dpi(14))
+                setOnClickListener {
+                    LibraryTheme.set(ctx, null)
+                    onChanged(true)
+                }
+            })
+        }
+    }
+
+    /** Miniatura de la biblioteca con los colores del tema: fondo, tarjeta, portada y botón de acento. */
+    private fun themePreview(t: LibraryTheme, b: BookEntry): View {
+        val label = if (t.dark) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundRect(t.background, ctx.dp(14f), ctx.color(R.color.separator), 1)
+            setPadding(ctx.dpi(10), ctx.dpi(10), ctx.dpi(10), ctx.dpi(10))
+        }
+        box.addView(TextView(ctx).apply {
+            text = if (t.dark) "Oscuro" else "Claro"
+            setTextColor(label)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15f)
+        })
+        val card = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundRect(t.group, ctx.dp(10f))
+            setPadding(ctx.dpi(8), ctx.dpi(8), ctx.dpi(8), ctx.dpi(8))
+        }
+        card.addView(android.widget.ImageView(ctx).apply {
+            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+            setImageBitmap(BookThemes.loadCover(b.coverPath))
+        }, LinearLayout.LayoutParams(ctx.dpi(26), ctx.dpi(39)))
+        card.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ctx.dpi(8), 0, 0, 0)
+            addView(TextView(ctx).apply {
+                text = "SEGUIR LEYENDO"
+                setTextColor(t.accent)
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 9f)
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+            })
+            addView(TextView(ctx).apply {
+                text = "Continuar"
+                setTextColor(0xFFFFFFFF.toInt())
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 10f)
+                background = roundRect(t.accent, ctx.dp(10f))
+                setPadding(ctx.dpi(8), ctx.dpi(2), ctx.dpi(8), ctx.dpi(2))
+            })
+        })
+        box.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = ctx.dpi(8)
+        })
+        val selected = LibraryTheme.current(ctx)?.let { it.source == t.source && it.dark == t.dark } == true
+        box.addView(TextView(ctx).apply {
+            text = if (selected) "En uso" else "Usar"
+            gravity = Gravity.CENTER
+            setTextColor(if (selected) label else t.accent)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setPadding(0, ctx.dpi(10), 0, 0)
+        })
+        box.setOnClickListener {
+            performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+            val wasDark = isNight()
+            LibraryTheme.set(ctx, t)
+            // El tema se creó para claro u oscuro: la app se pone en ese modo
+            prefs.appMode = if (t.dark) AppMode.DARK else AppMode.LIGHT
+            AppCompatDelegate.setDefaultNightMode(prefs.appNightMode())
+            onChanged(t.dark == wasDark)
+        }
+        return box
     }
 
     private fun isNight() =

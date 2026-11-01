@@ -126,6 +126,8 @@ class LibraryActivity : AppCompatActivity() {
         library = Library(this)
 
         val root = findViewById<View>(R.id.root)
+        // Con un tema de estantería el fondo viene de la portada elegida
+        root.setBackgroundColor(color(R.color.bg_grouped))
         val topBar = findViewById<View>(R.id.topBar)
         val smallTitle = findViewById<View>(R.id.smallTitle)
         val topDivider = findViewById<View>(R.id.topDivider)
@@ -1037,6 +1039,10 @@ class LibraryActivity : AppCompatActivity() {
         val dailySource: TextView = v.findViewById(R.id.dailySource)
 
         init {
+            // Tarjetas y botón con los colores del tema (incluido el creado desde una portada)
+            heroBox.background = roundRect(color(R.color.group_bg), dp(12f))
+            v.findViewById<View?>(R.id.daily)?.background = roundRect(color(R.color.group_bg), dp(12f))
+            heroContinue.background = roundRect(color(R.color.accent), dp(100f))
             filterBox.addView(android.widget.HorizontalScrollView(v.context).apply {
                 isHorizontalScrollBarEnabled = false
                 addView(chips)
