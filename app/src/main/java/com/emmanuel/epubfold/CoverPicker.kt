@@ -106,19 +106,72 @@ object CoverSearch {
         }
     }
 
-    /** Todas las fuentes en paralelo, intercaladas para que se vean variadas. */
-    suspend fun search(query: String): List<CoverSuggestion> = coroutineScope {
-        val sources = listOf(
-            async(Dispatchers.IO) { runCatching { itunes(query) }.getOrDefault(emptyList()) },
-            async(Dispatchers.IO) { runCatching { googleBooks(query) }.getOrDefault(emptyList()) },
-            async(Dispatchers.IO) { runCatching { openLibrary(query) }.getOrDefault(emptyList()) },
-        ).awaitAll()
+    /** AniList: portadas de manga y novelas gráficas (API pública sin clave). */
+    private fun aniList(q: String): List<CoverSuggestion> {
+        val body = JSONObject().apply {
+            put("query", "query(\$q:String){Page(perPage:12){media(search:\$q,type:MANGA){title{romaji english}coverImage{large extraLarge}}}}")
+            put("variables", JSONObject().put("q", q))
+        }.toString()
+        val conn = URL("https://graphql.anilist.co").openConnection() as HttpURLConnection
+        conn.connectTimeout = 12_000
+        conn.readTimeout = 12_000
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("Accept", "application/json")
+        val json = try {
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            if (conn.responseCode != 200) return emptyList()
+            conn.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
+        } finally {
+            conn.disconnect()
+        }
+        val arr = JSONObject(json).optJSONObject("data")?.optJSONObject("Page")?.optJSONArray("media") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.getJSONObject(i)
+            val img = o.optJSONObject("coverImage") ?: return@mapNotNull null
+            val large = img.optString("large").ifEmpty { return@mapNotNull null }
+            val t = o.optJSONObject("title")
+            CoverSuggestion(large, img.optString("extraLarge").ifEmpty { large }, "AniList",
+                t?.optString("english")?.takeIf { it.isNotEmpty() && it != "null" } ?: t?.optString("romaji").orEmpty())
+        }
+    }
+
+    /**
+     * Todas las fuentes en paralelo. Con [comic] se añaden búsquedas pensadas para
+     * cómics y manga. Los resultados cuyo título coincide más con la búsqueda van primero.
+     */
+    suspend fun search(query: String, comic: Boolean = false): List<CoverSuggestion> = coroutineScope {
+        fun safe(block: () -> List<CoverSuggestion>) = async(Dispatchers.IO) { runCatching(block).getOrDefault(emptyList()) }
+        val jobs = ArrayList(listOf(
+            safe { itunes(query) },
+            safe { googleBooks(query) },
+            safe { openLibrary(query) },
+        ))
+        if (comic) {
+            jobs += safe { itunes("$query comic") }
+            jobs += safe { googleBooks("$query subject:comics") }
+            jobs += safe { googleBooks("$query graphic novel") }
+            jobs += safe { aniList(query) }
+        }
+        val sources = jobs.awaitAll()
         val out = ArrayList<CoverSuggestion>()
         val seen = HashSet<String>()
         val max = sources.maxOfOrNull { it.size } ?: 0
         for (i in 0 until max) sources.forEach { list -> list.getOrNull(i)?.let { if (seen.add(it.fullUrl)) out += it } }
-        out.take(36)
+        // Relevancia: cuántas palabras de la búsqueda aparecen en el título del resultado
+        val words = normalize(query).split(' ').filter { it.length > 1 }
+        out.withIndex()
+            .sortedWith(compareByDescending<IndexedValue<CoverSuggestion>> { iv ->
+                val t = normalize(iv.value.label)
+                words.count { t.contains(it) }
+            }.thenBy { it.index })
+            .map { it.value }
+            .take(48)
     }
+
+    private fun normalize(s: String) = java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}"), "").replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
 
     /** Miniatura descargada y reducida. */
     fun thumb(url: String, maxW: Int): Bitmap? = runCatching {
@@ -178,11 +231,18 @@ class CoverPickerSheet(
             setPadding(ctx.dpi(20), 0, ctx.dpi(20), ctx.dpi(12))
         })
 
-        // --- Galería
-        col.addView(pill("Elegir una imagen de la galería") {
+        // --- Galería y buscadores de imágenes
+        val actions = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        actions.addView(pill("Galería") {
             dialog.dismiss()
             onPickFromGallery()
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = ctx.dpi(6) })
+        actions.addView(pill("Google Imágenes") {
+            dialog.dismiss()
+            val q = cleanBookTitle(entry.title) + if (entry.format == BookFormat.EPUB) " portada libro" else " comic cover"
+            activity.startActivity(CoverWebActivity.intent(activity, entry.id, q))
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = ctx.dpi(6) })
+        col.addView(actions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(ctx.dpi(16), 0, ctx.dpi(16), ctx.dpi(6))
         })
 
@@ -229,7 +289,7 @@ class CoverPickerSheet(
             true
         }
         col.addView(TextView(ctx).apply {
-            text = "Portadas de Apple Books, Google Books y Open Library. Se guarda una copia sólo en tu teléfono."
+            text = "Portadas de Apple Books, Google Books, Open Library y AniList (manga). ¿No aparece? Usa «Google Imágenes». Se guarda una copia sólo en tu teléfono."
             setTextAppearance(R.style.Text_Footnote)
             setPadding(ctx.dpi(20), ctx.dpi(10), ctx.dpi(20), 0)
         })
@@ -321,7 +381,7 @@ class CoverPickerSheet(
         status.visibility = View.VISIBLE
         status.text = "Buscando portadas…"
         searchJob = scope.launch {
-            val results = CoverSearch.search(q)
+            val results = CoverSearch.search(q, comic = entry.format != BookFormat.EPUB)
             if (results.isEmpty()) {
                 status.text = "Sin resultados (o sin conexión). Prueba con otras palabras, p. ej. el título en inglés."
                 return@launch

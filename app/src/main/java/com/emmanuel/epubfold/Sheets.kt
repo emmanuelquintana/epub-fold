@@ -271,6 +271,40 @@ class SettingsSheet(
         }
         refreshTiles()
 
+        // --- Temas creados a partir de portadas
+        col.addView(caption("Temas de tu biblioteca"))
+        val libRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        col.addView(android.widget.HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = false
+            clipToPadding = false
+            addView(libRow)
+        })
+        fun buildLibRow() {
+            libRow.removeAllViews()
+            libRow.addView(libraryThemeTile(null, "Desde un libro", "+") {
+                BookThemeSheet(activity, prefs) {
+                    onTheme(ReaderTheme.PERSONAL)
+                    refreshTiles()
+                    buildLibRow()
+                }.show()
+            })
+            BookThemes.all(ctx).forEach { bt ->
+                libRow.addView(libraryThemeTile(bt, bt.name, "Aa", onLongClick = {
+                    com.google.android.material.dialog.MaterialAlertDialogBuilder(ctx)
+                        .setTitle("¿Borrar «${bt.name}»?")
+                        .setNegativeButton("Cancelar", null)
+                        .setPositiveButton("Borrar") { _, _ -> BookThemes.remove(ctx, bt.id); buildLibRow() }
+                        .show()
+                }) {
+                    BookThemes.apply(prefs, bt)
+                    onTheme(ReaderTheme.PERSONAL)
+                    refreshTiles()
+                    buildLibRow()
+                })
+            }
+        }
+        buildLibRow()
+
         // --- Textura y tema automático
         spacer(col, 8)
         val look = group(col)
@@ -546,6 +580,58 @@ class SettingsSheet(
             setPadding(0, ctx.dpi(6), 0, 0)
         })
         themeTiles += t to swatch
+        return box
+    }
+
+    /** Muestra un tema generado (o el botón «+») en la fila de temas de la biblioteca. */
+    private fun libraryThemeTile(
+        t: BookTheme?,
+        label: String,
+        sample: String,
+        onLongClick: (() -> Unit)? = null,
+        onClick: () -> Unit,
+    ): View {
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(ctx.dpi(5), ctx.dpi(4), ctx.dpi(5), ctx.dpi(10))
+            layoutParams = LinearLayout.LayoutParams(ctx.dpi(88), ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        val active = t != null && BookThemes.isActive(prefs, t)
+        val swatch = TextView(ctx).apply {
+            text = sample
+            gravity = Gravity.CENTER
+            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (t == null) 26f else 22f)
+            setTextColor(t?.text ?: accent)
+            background = roundRect(
+                t?.paper ?: ctx.color(R.color.fill), ctx.dp(14f),
+                if (active) accent else ctx.color(R.color.separator),
+                if (active) ctx.dpi(3) else ctx.dpi(1),
+            )
+            setOnClickListener {
+                performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                onClick()
+            }
+            if (onLongClick != null) setOnLongClickListener { onLongClick(); true }
+        }
+        box.addView(swatch, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ctx.dpi(62)))
+        box.addView(TextView(ctx).apply {
+            text = label.substringBefore(" · ")
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setTextAppearance(R.style.Text_Footnote)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setPadding(0, ctx.dpi(6), 0, 0)
+        })
+        if (t != null) box.addView(TextView(ctx).apply {
+            text = label.substringAfter(" · ", "")
+            gravity = Gravity.CENTER
+            maxLines = 1
+            setTextAppearance(R.style.Text_Footnote)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+        })
         return box
     }
 

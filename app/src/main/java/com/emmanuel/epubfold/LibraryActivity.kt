@@ -896,6 +896,7 @@ class LibraryActivity : AppCompatActivity() {
             menu.add(0, 9, 4, if (entry.tags.isEmpty()) "Estanterías…" else "Estanterías: ${entry.tags.joinToString(", ")}…")
             menu.add(0, 8, 5, "Cambiar portada…")
             menu.add(0, 11, 5, "Editar título y autor…")
+            if (entry.coverPath != null) menu.add(0, 12, 5, "Crear tema de lectura con su portada…")
             menu.add(0, 10, 6, if (entry.hidden) "Quitar de privados" else "Mover a privados")
             menu.add(0, 3, 7, "Mover a la papelera")
             setOnMenuItemClickListener {
@@ -930,6 +931,9 @@ class LibraryActivity : AppCompatActivity() {
                     9 -> chooseShelves(entry)
                     8 -> changeCover(entry)
                     11 -> editTitle(entry)
+                    12 -> BookThemeSheet(this@LibraryActivity, ReaderPrefs(this@LibraryActivity), entry) {
+                        Toast.makeText(this@LibraryActivity, "Tema aplicado: lo verás al abrir un libro", Toast.LENGTH_LONG).show()
+                    }.show()
                 }
                 CloudSync.schedulePush(this@LibraryActivity, entry.id)
                 true

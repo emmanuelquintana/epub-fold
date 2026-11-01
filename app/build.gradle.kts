@@ -102,4 +102,7 @@ dependencies {
 
     // Cómics en CBR (RAR)
     implementation("com.github.junrar:junrar:7.5.5")
+
+    // Paleta de colores de las portadas (generador de temas)
+    implementation("androidx.palette:palette-ktx:1.0.0")
 }
