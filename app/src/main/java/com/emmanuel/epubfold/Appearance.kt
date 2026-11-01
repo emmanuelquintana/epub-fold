@@ -312,7 +312,7 @@ class AppearanceSheet(
             setPadding(0, ctx.dpi(10), 0, 0)
         })
         box.setOnClickListener {
-            performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+            it.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
             val wasDark = isNight()
             LibraryTheme.set(ctx, t)
             // El tema se creó para claro u oscuro: la app se pone en ese modo
