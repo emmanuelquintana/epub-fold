@@ -75,14 +75,71 @@ object StorageScan {
             else root to if (i == 0) "" else "Tarjeta SD"
         }.distinctBy { it.first.absolutePath }
 
+    /** Extensiones que pueden ser un libro (los .zip/.rar solo si llevan imágenes: cómics sin renombrar). */
+    private val ARCHIVE_EXT = setOf("zip", "rar")
+
+    private fun extOf(name: String) = name.substringAfterLast('.', "").lowercase()
+
+    private fun isCandidate(name: String) = extOf(name).let { it in LibraryActivity.BOOK_EXT || it in ARCHIVE_EXT }
+
+    /** ¿Este .zip o .rar es un cómic? Mira sólo el índice del archivo, no lo descomprime. */
+    private fun isComicArchive(f: File): Boolean = runCatching {
+        when (extOf(f.name)) {
+            "zip" -> java.util.zip.ZipFile(f).use { z ->
+                var images = 0
+                var others = 0
+                for (e in z.entries()) {
+                    if (e.isDirectory) continue
+                    if (Formats.isImageName(e.name)) images++ else if (!e.name.endsWith("ComicInfo.xml", true)) others++
+                    if (images >= 3) break
+                }
+                images >= 3 && others <= images
+            }
+            "rar" -> com.github.junrar.Archive(f).use { a ->
+                a.fileHeaders.filter { !it.isDirectory }.take(12).count { Formats.isImageName(it.fileName) } >= 3
+            }
+            else -> true
+        }
+    }.getOrDefault(false)
+
+    /** Mismo criterio para un archivo elegido con el selector de carpetas (sólo ZIP). */
+    private fun isComicArchive(context: Context, uri: Uri, name: String): Boolean = runCatching {
+        when (extOf(name)) {
+            "zip" -> context.contentResolver.openInputStream(uri)?.use { input ->
+                java.util.zip.ZipInputStream(input.buffered()).use { z ->
+                    var images = 0
+                    var seen = 0
+                    while (seen < 12) {
+                        val e = z.nextEntry ?: break
+                        if (!e.isDirectory) {
+                            seen++
+                            if (Formats.isImageName(e.name)) images++
+                        }
+                    }
+                    images >= 3
+                }
+            } ?: false
+            "rar" -> true
+            else -> true
+        }
+    }.getOrDefault(false)
+
+    private fun accept(f: File): Boolean {
+        val ext = extOf(f.name)
+        if (f.length() <= 1024) return false
+        return ext in LibraryActivity.BOOK_EXT || (ext in ARCHIVE_EXT && isComicArchive(f))
+    }
+
     /**
      * Recorre el almacenamiento. Bloqueante. [onProgress] recibe las carpetas revisadas y
      * los libros encontrados; [cancelled] corta el recorrido si se cierra la hoja.
      */
     fun scan(context: Context, cancelled: () -> Boolean, onProgress: (dirs: Int, found: Int) -> Unit): List<FoundBook> {
         val out = ArrayList<FoundBook>()
+        val seenPaths = HashSet<String>()
         var dirs = 0
-        roots(context).forEach { (root, volume) ->
+        val volumes = roots(context)
+        volumes.forEach { (root, volume) ->
             fun walk(d: File, rel: String, depth: Int) {
                 if (depth > 12 || cancelled()) return
                 dirs++
@@ -92,11 +149,16 @@ object StorageScan {
                     val n = f.name
                     if (n.startsWith(".")) continue
                     if (f.isDirectory) {
-                        // Datos privados de otras apps y caché del sistema: nunca hay libros del usuario
-                        if (depth == 0 && n == "Android") continue
+                        if (depth == 0 && n == "Android") {
+                            // Android/data y obb son privados, pero Android/media guarda lo que se
+                            // descarga con Telegram, WhatsApp y otras apps (muchos cómics llegan así)
+                            val media = File(f, "media")
+                            if (media.isDirectory) walk(media, "Android/media", depth + 1)
+                            continue
+                        }
                         walk(f, if (rel.isEmpty()) n else "$rel/$n", depth + 1)
-                    } else if (n.substringAfterLast('.', "").lowercase() in LibraryActivity.BOOK_EXT && f.length() > 1024) {
-                        val folder = listOf(volume, rel).filter { it.isNotEmpty() }.joinToString(" · ")
+                    } else if (isCandidate(n) && accept(f) && seenPaths.add(f.absolutePath)) {
+                        val folder = listOf(volume, prettyFolder(rel)).filter { it.isNotEmpty() }.joinToString(" · ")
                             .ifEmpty { "Almacenamiento interno" }
                         out += FoundBook(Uri.fromFile(f), n, folder, f.length(), f.lastModified())
                     }
@@ -104,8 +166,53 @@ object StorageScan {
             }
             walk(root, "", 0)
         }
+        // Segunda pasada con el índice de archivos del sistema: encuentra lo que el
+        // recorrido no pudo listar (carpetas protegidas, tarjetas SD sin acceso directo…)
+        if (!cancelled()) runCatching {
+            mediaStoreFiles(context).forEach { f ->
+                if (f.exists() && seenPaths.add(f.absolutePath) && accept(f)) {
+                    val parent = f.parentFile?.absolutePath ?: ""
+                    val vol = volumes.firstOrNull { parent.startsWith(it.first.absolutePath) }
+                    val rel = vol?.let { parent.removePrefix(it.first.absolutePath).trim('/') } ?: parent
+                    val folder = listOf(vol?.second ?: "", prettyFolder(rel)).filter { it.isNotEmpty() }.joinToString(" · ")
+                        .ifEmpty { "Almacenamiento interno" }
+                    out += FoundBook(Uri.fromFile(f), f.name, folder, f.length(), f.lastModified())
+                }
+            }
+        }
         onProgress(dirs, out.size)
         return out
+    }
+
+    /** Archivos con extensión de libro o cómic que conoce el índice multimedia de Android. */
+    private fun mediaStoreFiles(context: Context): List<File> {
+        val exts = LibraryActivity.BOOK_EXT + ARCHIVE_EXT
+        val where = exts.joinToString(" OR ") { "LOWER(${android.provider.MediaStore.Files.FileColumns.DATA}) LIKE ?" }
+        val args = exts.map { "%.$it" }.toTypedArray()
+        val out = ArrayList<File>()
+        context.contentResolver.query(
+            android.provider.MediaStore.Files.getContentUri("external"),
+            arrayOf(android.provider.MediaStore.Files.FileColumns.DATA),
+            where, args, null,
+        )?.use { c ->
+            while (c.moveToNext()) {
+                c.getString(0)?.let { out += File(it) }
+            }
+        }
+        return out
+    }
+
+    /** «Android/media/org.telegram.messenger/Telegram/Telegram Documents» → «Telegram · Telegram Documents». */
+    private fun prettyFolder(rel: String): String {
+        if (!rel.startsWith("Android/media/")) return rel
+        val rest = rel.removePrefix("Android/media/").substringAfter('/', "")
+        val app = rel.removePrefix("Android/media/").substringBefore('/')
+        val name = when {
+            app.contains("telegram", true) -> "Telegram"
+            app.contains("whatsapp", true) -> "WhatsApp"
+            else -> app.substringAfterLast('.')
+        }
+        return if (rest.isEmpty()) name else "$name · ${rest.substringAfterLast('/')}"
     }
 
     /** Lo mismo que [scan] pero dentro de una carpeta elegida con el selector del sistema. */
@@ -117,7 +224,7 @@ object StorageScan {
             d.listFiles().forEach { f ->
                 val n = f.name ?: return@forEach
                 if (f.isDirectory) walk(f, "$rel/$n", depth + 1)
-                else if (n.substringAfterLast('.', "").lowercase() in LibraryActivity.BOOK_EXT) {
+                else if (isCandidate(n) && (extOf(n) in LibraryActivity.BOOK_EXT || isComicArchive(context, f.uri, n))) {
                     out += FoundBook(f.uri, n, rel, f.length(), f.lastModified())
                 }
             }
@@ -341,7 +448,7 @@ class ScanPickerSheet(
 
     private fun matchesKind(b: FoundBook, k: String) = when (k) {
         "all" -> true
-        "comic" -> b.ext == "cbz" || b.ext == "cbr"
+        "comic" -> b.ext == "cbz" || b.ext == "cbr" || b.ext == "zip" || b.ext == "rar"
         else -> b.ext == k
     }
 
@@ -439,7 +546,8 @@ class ScanPickerSheet(
             val ctx = h.row.context
             h.title.text = b.title
             h.title.alpha = if (b.inLibrary) 0.6f else 1f
-            val parts = arrayListOf(b.ext.uppercase(), Formatter.formatShortFileSize(ctx, b.size), b.folder)
+            val kind = if (b.ext == "zip" || b.ext == "rar") "CÓMIC (${b.ext.uppercase()})" else b.ext.uppercase()
+            val parts = arrayListOf(kind, Formatter.formatShortFileSize(ctx, b.size), b.folder)
             if (b.inLibrary) parts.add(0, "Ya en tu biblioteca")
             h.caption.text = parts.joinToString(" · ")
             h.check.isChecked = b.checked

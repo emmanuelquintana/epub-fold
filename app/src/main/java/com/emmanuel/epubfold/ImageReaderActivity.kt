@@ -1,23 +1,14 @@
 package com.emmanuel.epubfold
 
-import android.annotation.SuppressLint
-import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Matrix
-import android.graphics.Paint
-import android.graphics.RectF
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.LruCache
 import android.util.TypedValue
-import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
-import android.view.MotionEvent
-import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -40,7 +31,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -230,9 +220,28 @@ class ImageReaderActivity : AppCompatActivity() {
         setContentView(root)
         updateButtons()
 
-        pageView.onTurn = { forward -> turn(forward) }
+        pageView.bgColor = BG
+        pageView.animation = ReaderPrefs(this).animation
         pageView.onCenterTap = { setOverlay(!overlay) }
         pageView.onSize = { relayout() }
+        pageView.neighbor = { forward -> (slot + if (forward) 1 else -1).takeIf { it in slots.indices } }
+        pageView.slotContent = { s ->
+            val b = book
+            val pages = slots.getOrNull(s)
+            if (b == null || pages == null) null
+            else {
+                val ordered = if (rtl) pages.reversedArray() else pages
+                SpreadView.Content(ordered.map { b.aspectSafe(it) }, ordered.map { cache.get(it) })
+            }
+        }
+        pageView.onFlipped = { target ->
+            markActivity()
+            showSlot(target)
+        }
+        pageView.onEdgeReached = { forward ->
+            if (forward) Toast.makeText(this, "Fin del libro", Toast.LENGTH_SHORT).show()
+        }
+        pageView.onZoomSettled = { z -> renderHiRes(z) }
     }
 
     private fun iconButton(res: Int, desc: String, onClick: () -> Unit) = ImageButton(this).apply {
@@ -306,15 +315,31 @@ class ImageReaderActivity : AppCompatActivity() {
 
     private fun slotFor(page: Int) = slots.indexOfFirst { page in it }.coerceAtLeast(0)
 
+    /** Pasa página con la animación elegida (la vista avisa al terminar con onFlipped). */
     private fun turn(forward: Boolean) {
-        // En manga avanzar es ir hacia la izquierda
-        val next = slot + if (forward) 1 else -1
-        if (next !in slots.indices) {
-            if (forward) Toast.makeText(this, "Fin del libro", Toast.LENGTH_SHORT).show()
-            return
+        if (slots.isEmpty()) return
+        pageView.animateTurn(forward)
+    }
+
+    private var hiResJob: Job? = null
+
+    /** Con zoom, vuelve a dibujar las páginas visibles a más resolución para que se lean nítidas. */
+    private fun renderHiRes(zoom: Float) {
+        hiResJob?.cancel()
+        val b = book ?: return
+        if (zoom <= 1.2f || slots.isEmpty()) return
+        val current = slot
+        val pages = slots[current]
+        val ordered = if (rtl) pages.reversedArray() else pages
+        val factor = zoom.coerceAtMost(3f)
+        val w = (pageView.width / pages.size * factor).toInt()
+        val h = (pageView.height * factor).toInt()
+        hiResJob = lifecycleScope.launch {
+            val list = withContext(Dispatchers.IO) {
+                ordered.map { p -> runCatching { b.render(p, w, h) }.getOrNull() }
+            }
+            if (slot == current) pageView.setHiRes(current, list)
         }
-        markActivity()
-        showSlot(next)
     }
 
     private fun showSlot(index: Int) {
@@ -332,18 +357,21 @@ class ImageReaderActivity : AppCompatActivity() {
         val w = pageView.width / pages.size
         val h = pageView.height
         val cached = ordered.map { cache.get(it) }
-        pageView.setPages(ordered.map { b.aspectSafe(it) }, cached)
+        pageView.setSlot(slot, ordered.map { b.aspectSafe(it) }, cached)
         renderJob?.cancel()
         renderJob = lifecycleScope.launch {
             val bitmaps = ordered.map { p ->
                 cache.get(p) ?: withContext(Dispatchers.IO) { runCatching { b.render(p, w * 5 / 4, h * 5 / 4) }.getOrNull() }
                     ?.also { cache.put(p, it) }
             }
-            pageView.setPages(ordered.map { b.aspectSafe(it) }, bitmaps)
+            pageView.setSlot(slot, ordered.map { b.aspectSafe(it) }, bitmaps)
             // Precarga las páginas vecinas
             listOf(slot + 1, slot - 1).filter { it in slots.indices }.flatMap { slots[it].toList() }.forEach { p ->
                 if (cache.get(p) == null) {
-                    withContext(Dispatchers.IO) { runCatching { b.render(p, w * 5 / 4, h * 5 / 4) }.getOrNull() }?.let { cache.put(p, it) }
+                    withContext(Dispatchers.IO) { runCatching { b.render(p, w * 5 / 4, h * 5 / 4) }.getOrNull() }?.let {
+                        cache.put(p, it)
+                        pageView.invalidate()
+                    }
                 }
             }
         }
@@ -382,149 +410,5 @@ class ImageReaderActivity : AppCompatActivity() {
 
     companion object {
         private const val BG = 0xFF151517.toInt()
-    }
-}
-
-/**
- * Muestra una o dos páginas centradas. Pellizcar o doble toque para ampliar,
- * arrastrar para moverse; sin zoom, deslizar o tocar los bordes pasa página.
- */
-class SpreadView(context: Context) : View(context) {
-
-    var onTurn: ((forward: Boolean) -> Unit)? = null
-    var onCenterTap: (() -> Unit)? = null
-    var onSize: (() -> Unit)? = null
-    var rtl = false
-
-    private var aspects: List<Float> = emptyList()
-    private var bitmaps: List<Bitmap?> = emptyList()
-    private val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-    private val placeholder = Paint().apply { color = 0xFF2A2A2E.toInt() }
-    private val matrix = Matrix()
-    private var scale = 1f
-    private var tx = 0f
-    private var ty = 0f
-
-    fun setPages(aspects: List<Float>, bitmaps: List<Bitmap?>) {
-        val changed = aspects != this.aspects || bitmaps.size != this.bitmaps.size
-        this.aspects = aspects
-        this.bitmaps = bitmaps
-        if (changed) resetZoom()
-        invalidate()
-    }
-
-    private fun resetZoom() {
-        scale = 1f; tx = 0f; ty = 0f
-    }
-
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        resetZoom()
-        onSize?.invoke()
-    }
-
-    /** Rectángulos de cada página ajustados a la vista (sin zoom). */
-    private fun layoutRects(): List<RectF> {
-        if (aspects.isEmpty() || width == 0) return emptyList()
-        val totalAspect = aspects.sum()
-        var h = height.toFloat()
-        var w = h * totalAspect
-        if (w > width) {
-            w = width.toFloat()
-            h = w / totalAspect
-        }
-        var x = (width - w) / 2
-        val y = (height - h) / 2
-        return aspects.map { a ->
-            val pw = h * a
-            RectF(x, y, x + pw, y + h).also { x += pw }
-        }
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        canvas.save()
-        canvas.translate(tx, ty)
-        canvas.scale(scale, scale)
-        layoutRects().forEachIndexed { i, r ->
-            val bmp = bitmaps.getOrNull(i)
-            if (bmp == null) canvas.drawRect(r, placeholder)
-            else canvas.drawBitmap(bmp, null, r, paint)
-        }
-        canvas.restore()
-    }
-
-    private fun clampPan() {
-        if (scale <= 1.01f) {
-            resetZoom(); return
-        }
-        val minX = width - width * scale
-        val minY = height - height * scale
-        tx = tx.coerceIn(minX, 0f)
-        ty = ty.coerceIn(minY, 0f)
-    }
-
-    private val scaler = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-        override fun onScale(d: ScaleGestureDetector): Boolean {
-            val ns = (scale * d.scaleFactor).coerceIn(1f, 5f)
-            val f = ns / scale
-            tx = d.focusX - (d.focusX - tx) * f
-            ty = d.focusY - (d.focusY - ty) * f
-            scale = ns
-            clampPan()
-            invalidate()
-            return true
-        }
-    })
-
-    private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-        override fun onDown(e: MotionEvent) = true
-
-        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            val third = width / 3f
-            when {
-                e.x < third -> onTurn?.invoke(rtl)
-                e.x > width - third -> onTurn?.invoke(!rtl)
-                else -> onCenterTap?.invoke()
-            }
-            return true
-        }
-
-        override fun onDoubleTap(e: MotionEvent): Boolean {
-            if (scale > 1.01f) resetZoom() else {
-                scale = 2.5f
-                tx = e.x - e.x * scale
-                ty = e.y - e.y * scale
-                clampPan()
-            }
-            invalidate()
-            return true
-        }
-
-        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
-            if (scale <= 1.01f) return false
-            tx -= dx
-            ty -= dy
-            clampPan()
-            invalidate()
-            return true
-        }
-
-        override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
-            if (scale > 1.01f || e1 == null) return false
-            val dx = e2.x - e1.x
-            if (abs(dx) > abs(e2.y - e1.y) && abs(dx) > width * 0.08f) {
-                // Deslizar hacia la izquierda avanza (al revés en manga)
-                onTurn?.invoke((dx < 0) != rtl)
-                return true
-            }
-            return false
-        }
-    })
-
-    @SuppressLint("ClickableViewAccessibility")
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        scaler.onTouchEvent(event)
-        if (!scaler.isInProgress) gestures.onTouchEvent(event)
-        return true
     }
 }
