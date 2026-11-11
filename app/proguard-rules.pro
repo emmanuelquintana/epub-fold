@@ -30,3 +30,10 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+# Clases de Java de escritorio que el SDK sólo usa para salidas estructuradas (no se usan aquí)
+-dontwarn java.lang.reflect.AnnotatedType
+-dontwarn java.lang.reflect.AnnotatedParameterizedType
+-dontwarn java.lang.reflect.AnnotatedArrayType
+-dontwarn java.lang.reflect.AnnotatedWildcardType
+-dontwarn java.lang.reflect.AnnotatedTypeVariable
+-dontwarn com.github.victools.jsonschema.**
