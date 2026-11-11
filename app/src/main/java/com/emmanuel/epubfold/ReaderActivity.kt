@@ -186,6 +186,30 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         player = findViewById(R.id.player)
         playerToggle = findViewById(R.id.playerToggle)
         playerRate = findViewById(R.id.playerRate)
+        lastWidthDp = resources.configuration.screenWidthDp
+        remote = RemoteControlPanel(this,
+            onPrev = { turnPage(false) },
+            onNext = { turnPage(true) },
+            onToggle = {
+                if (readAloud.playing) readAloud.pause()
+                else if (player.visibility == View.VISIBLE) readAloud.play(this, readAloud.chapter, readAloud.offset)
+                else startListening(null)
+            },
+            onClose = { remote?.hide() },
+        ).also { r ->
+            findViewById<FrameLayout>(R.id.root).addView(r.view,
+                FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+        // Botón del mini reproductor para abrir el control remoto
+        player.addView(ImageButton(this).apply {
+            setImageResource(R.drawable.ic_book)
+            contentDescription = "Control remoto"
+            background = null
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            setPadding(dpi(9), dpi(9), dpi(9), dpi(9))
+            imageTintList = ColorStateList.valueOf(0xFF8E8E93.toInt())
+            setOnClickListener { showRemote() }
+        }, 1, LinearLayout.LayoutParams(dpi(40), dpi(40)))
         playerTimer = findViewById(R.id.playerTimer)
         selectionMenu = SelectionMenu(this)
         ruler = ReadingRulerView(this)
@@ -277,6 +301,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         findViewById<View>(R.id.toolSearch).setOnClickListener { showSearch() }
         findViewById<View>(R.id.toolListen).setOnClickListener { startListening(null) }
         findViewById<View>(R.id.toolThemes).setOnClickListener { showSettings() }
+        findViewById<View>(R.id.toolAssistant).setOnClickListener { showAssistant() }
         playerToggle.setOnClickListener {
             if (readAloud.playing) readAloud.pause()
             else readAloud.play(this, readAloud.chapter, readAloud.offset)
@@ -401,6 +426,11 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (!::selectionMenu.isInitialized) return
+        // Al doblar el Fold mientras escuchas, la pantalla exterior pasa a control remoto
+        val w = newConfig.screenWidthDp
+        if (lastWidthDp >= 600 && w < 600 && readAloud.playing) showRemote()
+        if (w >= 600) remote?.hide()
+        lastWidthDp = w
         checkAutoTheme()
         updatePanelVisibility()
         selectionMenu.dismiss()
@@ -417,7 +447,34 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         relayout()
     }
 
+    override fun onSelectionDrag(sel: BookView.TextSelection) {
+        val text = selectedText(sel).trim()
+        selectionMenu.dismiss()
+        DragDrop.dragText(bookView, "“$text”\n— ${entry.title}", entry.title, colors.paper, colors.text)
+    }
+
+    private var remote: RemoteControlPanel? = null
+    private var lastWidthDp = 0
+
+    /** Control remoto a pantalla completa (útil con el teléfono doblado mientras escuchas). */
+    private fun showRemote() {
+        setOverlay(false)
+        refreshRemote(force = true)
+        remote?.show()
+    }
+
+    private fun refreshRemote(force: Boolean = false) {
+        val r = remote ?: return
+        if (!force && !r.isShowing) return
+        val p = bookView.paginator ?: return
+        val page = currentPage()
+        val ch = p.pages.getOrNull(page)?.chapter ?: 0
+        val cover = entry.coverPath?.let { BookThemes.loadCover(it) }
+        r.update(cover, entry.title, book?.chapterTitle(ch) ?: "", page, p.pageCount, readAloud.playing, accent())
+    }
+
     override fun onPageChanged(page: Int) {
+        refreshRemote()
         bookView.paginator?.let { position = it.positionOf(page) }
         if (ruler.visibility == View.VISIBLE) ruler.resetToTop()
         trackReadingSpeed()
@@ -480,6 +537,23 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     }
 
     override fun onTextTap(chapter: Int, offset: Int): Boolean {
+        val text = bookView.paginator?.textOf(chapter)
+        if (text is android.text.Spanned && offset in 0 until text.length) {
+            // Imagen del libro: a pantalla completa con zoom
+            text.getSpans(offset, offset + 1, android.text.style.ImageSpan::class.java).firstOrNull()?.let { span ->
+                (span.drawable as? LazyImageDrawable)?.let { d ->
+                    ImageViewer.show(this, d.book, d.path)
+                    return true
+                }
+            }
+            // Enlace: nota al pie, referencia interna o web
+            text.getSpans(offset, offset + 1, android.text.style.URLSpan::class.java).firstOrNull()?.let { link ->
+                val s = text.getSpanStart(link)
+                val e = text.getSpanEnd(link)
+                openLink(chapter, link.url ?: "", text.subSequence(s, e).toString())
+                return true
+            }
+        }
         val h = notes.highlightAt(chapter, offset) ?: return false
         val anchor = anchorFor(h.chapter, h.start, h.end) ?: return false
         if (overlayVisible) setOverlay(false)
@@ -509,6 +583,53 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
             afterNotesChanged()
         }, actions = actions)
         return true
+    }
+
+    /** Enlace tocado: nota al pie en ventana, salto interno o web (preguntando antes). */
+    private fun openLink(chapter: Int, href: String, linkText: String) {
+        val b = book ?: return
+        val p = bookView.paginator ?: return
+        if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("mailto:")) {
+            MaterialAlertDialogBuilder(this)
+                .setTitle("Abrir enlace")
+                .setMessage(href)
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Abrir") { _, _ ->
+                    runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(href))) }
+                }
+                .show()
+            return
+        }
+        val path = b.spine.getOrNull(chapter) ?: return
+        val dir = path.substringBeforeLast('/', "")
+        val frag = href.substringAfter('#', "")
+        val target = if (href.startsWith("#")) path else EpubBook.resolve(dir, href)
+        val targetIndex = b.spine.indexOf(target).takeIf { it >= 0 } ?: chapter
+        lifecycleScope.launch {
+            val note = if (frag.isEmpty()) null else withContext(Dispatchers.IO) {
+                b.readText(target)?.let { TextTools.elementText(it, frag) }
+            }
+            fun go() {
+                val chText = p.textOf(targetIndex).toString()
+                val probe = note?.take(40)?.trim().orEmpty()
+                val off = if (probe.length >= 6) chText.indexOf(probe).coerceAtLeast(0) else 0
+                bookView.goTo(p.pageFor(ReadingPosition(targetIndex, off)))
+            }
+            // Una llamada corta (número, asterisco) con texto breve detrás: es una nota al pie
+            val looksLikeNote = note != null && note.length < 2500 &&
+                (linkText.trim().length <= 6 || linkText.trim().all { !it.isLetter() })
+            if (looksLikeNote) FootnoteSheet.show(this@ReaderActivity, linkText.trim(), note!!, colors) { go() }
+            else go()
+        }
+    }
+
+    /** Asistente con IA: resumen hasta aquí, preguntas sobre el libro y personajes (sin spoilers). */
+    private fun showAssistant() {
+        val b = book ?: return
+        val p = bookView.paginator ?: return
+        setOverlay(false)
+        val pos = p.positionOf(currentPage())
+        AssistantSheet(this, lifecycleScope, entry, b, p, pos.chapter, pos.charOffset, currentPage()).show()
     }
 
     private fun selectedText(sel: BookView.TextSelection): String {
@@ -851,12 +972,14 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         }
         val lineSpacing = prefs.lineSpacing
         val justify = prefs.justify
+        val bionic = prefs.bionic
+        val bookStyles = prefs.bookStyles
         val target = position
         loading.visibility = View.VISIBLE
 
         paginateJob = lifecycleScope.launch {
             val p = withContext(Dispatchers.Default) {
-                val pg = Paginator(b, paint, m.contentW, m.contentH, lineSpacing, density, justify)
+                val pg = Paginator(b, paint, m.contentW, m.contentH, lineSpacing, density, justify, bionic, bookStyles)
                 pg.paginate { !isActive }
                 pg
             }
@@ -1130,6 +1253,7 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
     }
 
     private fun updatePlayer() {
+        refreshRemote()
         playerToggle.setImageResource(if (readAloud.playing) R.drawable.ic_pause else R.drawable.ic_play)
         flexPlay?.text = if (readAloud.playing) "❚❚ Pausa" else "▶ Escuchar"
         val r = readAloud.rate
@@ -1193,10 +1317,10 @@ class ReaderActivity : AppCompatActivity(), BookView.Listener {
         listOf(R.id.btnBack, R.id.btnBookmark, R.id.btnNight, R.id.btnPanel).forEach {
             findViewById<View>(it).background = roundRect(circle, dp(19f))
         }
-        listOf(R.id.iconToc, R.id.iconSearch, R.id.iconListen, R.id.iconThemes).forEach {
+        listOf(R.id.iconToc, R.id.iconSearch, R.id.iconListen, R.id.iconThemes, R.id.iconAssistant).forEach {
             findViewById<ImageView>(it).imageTintList = tint
         }
-        listOf(R.id.labelToc, R.id.labelSearch, R.id.labelListen, R.id.labelThemes).forEach {
+        listOf(R.id.labelToc, R.id.labelSearch, R.id.labelListen, R.id.labelThemes, R.id.labelAssistant).forEach {
             findViewById<TextView>(it).setTextColor(t.text)
         }
         seek.progressTintList = ColorStateList.valueOf(accent)

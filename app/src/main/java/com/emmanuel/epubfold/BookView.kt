@@ -80,6 +80,9 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
 
         /** Toque sobre el texto; devolver true si se gestionó (p. ej. un subrayado). */
         fun onTextTap(chapter: Int, offset: Int): Boolean = false
+
+        /** Mantener pulsado dentro de la selección: arrastrarla a otra app (pantalla dividida). */
+        fun onSelectionDrag(sel: TextSelection) {}
     }
 
     data class TextSelection(val chapter: Int, val start: Int, val end: Int)
@@ -482,6 +485,13 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
 
     private val longPress = Runnable { onLongPress() }
 
+    private val dragPress = Runnable {
+        val sel = selection ?: return@Runnable
+        if (movedFar) return@Runnable
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        listener?.onSelectionDrag(sel)
+    }
+
     private fun onLongPress() {
         if (dragging || movedFar || curl != null) return
         val p = paginator ?: return
@@ -823,6 +833,12 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                     if (selDragging != 0) {
                         parent?.requestDisallowInterceptTouchEvent(true)
                         notifySelection(false)
+                    } else {
+                        val sel = selection!!
+                        val hit = hitTest(e.x, e.y, strict = true)
+                        if (hit != null && hit.first == sel.chapter && hit.second in sel.start until sel.end) {
+                            postDelayed(dragPress, ViewConfiguration.getLongPressTimeout().toLong())
+                        }
                     }
                     return true
                 }
@@ -832,7 +848,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
                 velocity?.addMovement(e)
                 val dx = e.x - downX
                 if (abs(dx) > touchSlop || abs(e.y - downY) > touchSlop) {
-                    if (!movedFar) removeCallbacks(longPress)
+                    if (!movedFar) { removeCallbacks(longPress); removeCallbacks(dragPress) }
                     movedFar = true
                 }
                 if (selection != null) {
@@ -874,6 +890,7 @@ class BookView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 velocity?.addMovement(e)
                 removeCallbacks(longPress)
+                removeCallbacks(dragPress)
                 if (selection != null) {
                     if (selDragging == 0 && !movedFar && e.actionMasked == MotionEvent.ACTION_UP) clearSelection()
                     else notifySelection(true)

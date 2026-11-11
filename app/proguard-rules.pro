@@ -17,3 +17,16 @@
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn org.checkerframework.**
 -dontwarn kotlinx.coroutines.debug.**
+
+# SDK de Anthropic: usa Jackson con reflexión sobre sus modelos
+-keep class com.anthropic.** { *; }
+-keep class com.fasterxml.jackson.** { *; }
+-keepattributes RuntimeVisibleAnnotations,RuntimeVisibleParameterAnnotations,KotlinMetadata
+-keep class kotlin.Metadata { *; }
+-dontwarn com.fasterxml.jackson.databind.ext.**
+-dontwarn java.beans.**
+-dontwarn org.w3c.dom.bootstrap.**
+-dontwarn javax.annotation.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**

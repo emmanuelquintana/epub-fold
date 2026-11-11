@@ -65,6 +65,9 @@ class SpreadView(context: Context) : View(context) {
     /** Paso a la viñeta siguiente/anterior; false si no quedan en la página (entonces se pasa página). */
     var onPanelStep: ((forward: Boolean) -> Boolean)? = null
 
+    /** Mantener pulsada una página: arrastrarla a otra app. Recibe el índice de la imagen tocada (0 o 1). */
+    var onLongPressPage: ((index: Int) -> Unit)? = null
+
     /** Contraste, brillo y blanco y negro aplicados al dibujar las páginas. */
     var imageFilter: android.graphics.ColorFilter? = null
         set(value) {
@@ -649,6 +652,16 @@ class SpreadView(context: Context) : View(context) {
                 else -> onCenterTap?.invoke()
             }
             return true
+        }
+
+        override fun onLongPress(e: MotionEvent) {
+            if (multiTouch || dragging || flip != null) return
+            // Qué página está bajo el dedo (teniendo en cuenta el zoom)
+            val px = (e.x - tx) / scale
+            val rects = rectsFor(aspects)
+            val i = rects.indexOfFirst { px >= it.left && px <= it.right }.coerceAtLeast(0)
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            onLongPressPage?.invoke(i)
         }
 
         override fun onDoubleTap(e: MotionEvent): Boolean {

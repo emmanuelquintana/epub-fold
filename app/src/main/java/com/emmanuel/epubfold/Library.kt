@@ -524,6 +524,16 @@ class ReaderPrefs(context: Context) {
         get() = sp.getBoolean("justify", true)
         set(v) = sp.edit().putBoolean("justify", v).apply()
 
+    /** Lectura biónica: el comienzo de cada palabra en negrita. */
+    var bionic: Boolean
+        get() = sp.getBoolean("bionic", false)
+        set(v) = sp.edit().putBoolean("bionic", v).apply()
+
+    /** Respetar alineación, cursivas, negritas y tamaños de la hoja de estilos del libro. */
+    var bookStyles: Boolean
+        get() = sp.getBoolean("bookStyles", false)
+        set(v) = sp.edit().putBoolean("bookStyles", v).apply()
+
     var layoutMode: LayoutMode
         get() = enumPref("layoutName", LayoutMode.AUTO)
         set(v) = sp.edit().putString("layoutName", v.name).apply()

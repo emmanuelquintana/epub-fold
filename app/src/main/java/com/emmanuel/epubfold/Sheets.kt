@@ -444,6 +444,10 @@ class SettingsSheet(
         custom.addView(hairline(ctx, ctx.dpi(16)))
         custom.addView(switchRow("Justificar texto", prefs.justify) { prefs.justify = it; onRelayout() })
         custom.addView(hairline(ctx, ctx.dpi(16)))
+        custom.addView(switchRow("Lectura biónica (inicio de palabra en negrita)", prefs.bionic) { prefs.bionic = it; onRelayout() })
+        custom.addView(hairline(ctx, ctx.dpi(16)))
+        custom.addView(switchRow("Estilos del libro (alineación, cursivas, tamaños)", prefs.bookStyles) { prefs.bookStyles = it; onRelayout() })
+        custom.addView(hairline(ctx, ctx.dpi(16)))
         custom.addView(switchRow("Pasar página con el volumen", prefs.volumeKeys) { prefs.volumeKeys = it })
         custom.addView(hairline(ctx, ctx.dpi(16)))
         custom.addView(switchRow("Mantener pantalla encendida", prefs.keepScreenOn) {

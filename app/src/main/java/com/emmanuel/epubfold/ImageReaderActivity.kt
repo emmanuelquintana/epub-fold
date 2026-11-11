@@ -26,6 +26,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -113,6 +114,20 @@ class ImageReaderActivity : AppCompatActivity() {
         insets.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         insets.hide(WindowInsetsCompat.Type.systemBars())
         insets.isAppearanceLightStatusBars = false
+
+        // Modo Flex: medio doblado en horizontal, la página arriba y los controles abajo
+        lifecycleScope.launch {
+            repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+                androidx.window.layout.WindowInfoTracker.getOrCreate(this@ImageReaderActivity)
+                    .windowLayoutInfo(this@ImageReaderActivity)
+                    .collect { info ->
+                        val fold = info.displayFeatures.filterIsInstance<androidx.window.layout.FoldingFeature>().firstOrNull()
+                        val flex = fold != null && fold.state == androidx.window.layout.FoldingFeature.State.HALF_OPENED &&
+                            fold.orientation == androidx.window.layout.FoldingFeature.Orientation.HORIZONTAL
+                        setFlex(if (flex) fold!!.bounds else null)
+                    }
+            }
+        }
 
         lifecycleScope.launch {
             val b = runCatching { withContext(Dispatchers.IO) { Formats.open(entry.format, File(entry.path)) } }
@@ -267,6 +282,16 @@ class ImageReaderActivity : AppCompatActivity() {
         }
         pageView.onZoomSettled = { z -> renderHiRes(z) }
         pageView.onPanelStep = { forward -> panelStep(forward) }
+        pageView.onLongPressPage = { i ->
+            val pages = slots.getOrNull(slot)
+            if (pages != null) {
+                val ordered = if (rtl) pages.reversedArray() else pages
+                val p = ordered.getOrNull(i) ?: ordered.first()
+                cache.get(p)?.let { bmp ->
+                    runCatching { DragDrop.dragImage(this, pageView, bmp, "${cleanBookTitle(entry.title)} p${p + 1}") }
+                }
+            }
+        }
         pageView.imageFilter = image.filter()
 
         webtoon.aspect = { p -> aspectOf(p) }
@@ -299,6 +324,65 @@ class ImageReaderActivity : AppCompatActivity() {
         setPadding(dpi(8), dpi(8), dpi(8), dpi(8))
         layoutParams = LinearLayout.LayoutParams(dpi(38), dpi(38)).apply { marginStart = dpi(8) }
         setOnClickListener { onClick() }
+    }
+
+    private var flexPanel: LinearLayout? = null
+    private var flexInfo: TextView? = null
+
+    private fun setFlex(fold: android.graphics.Rect?) {
+        val root = pageView.parent as FrameLayout
+        if (fold == null) {
+            flexPanel?.visibility = View.GONE
+            listOf<View>(pageView, webtoon).forEach { v ->
+                v.layoutParams = (v.layoutParams as FrameLayout.LayoutParams).apply { height = FrameLayout.LayoutParams.MATCH_PARENT }
+            }
+            return
+        }
+        if (root.height == 0) { root.post { setFlex(fold) }; return }
+        val loc = IntArray(2)
+        root.getLocationInWindow(loc)
+        val top = (fold.top - loc[1]).coerceAtLeast(dpi(200))
+        listOf<View>(pageView, webtoon).forEach { v ->
+            v.layoutParams = (v.layoutParams as FrameLayout.LayoutParams).apply { height = top; gravity = Gravity.TOP }
+        }
+        val panel = flexPanel ?: LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(0xFF1C1C1E.toInt())
+            setPadding(dpi(24), dpi(12), dpi(24), dpi(12))
+            flexInfo = TextView(this@ImageReaderActivity).apply {
+                setTextColor(0xFFE5E5EA.toInt())
+                gravity = Gravity.CENTER
+                textSize = 14f
+            }
+            addView(flexInfo)
+            val row = LinearLayout(this@ImageReaderActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                setPadding(0, dpi(14), 0, 0)
+            }
+            fun button(label: String, filled: Boolean, onClick: () -> Unit) = TextView(this@ImageReaderActivity).apply {
+                text = label
+                gravity = Gravity.CENTER
+                textSize = 16f
+                setTextColor(0xFFFFFFFF.toInt())
+                background = roundRect(if (filled) accent else 0x33FFFFFF, dp(16f))
+                setPadding(dpi(16), dpi(14), dpi(16), dpi(14))
+                setOnClickListener { onClick() }
+            }
+            row.addView(button("‹ Anterior", false) { turn(false) }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(button("Modo", true) { chooseMode() }, LinearLayout.LayoutParams(0, -2, 1f).apply {
+                marginStart = dpi(10); marginEnd = dpi(10)
+            })
+            row.addView(button("Siguiente ›", false) { turn(true) }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(row, LinearLayout.LayoutParams(-1, -2))
+        }.also { flexPanel = it; root.addView(it) }
+        panel.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, (root.height - (fold.bottom - loc[1])).coerceAtLeast(dpi(120)), Gravity.BOTTOM
+        )
+        panel.visibility = View.VISIBLE
+        flexInfo?.text = info.text
+        setOverlay(false)
     }
 
     private fun chooseMode() {
@@ -551,6 +635,7 @@ class ImageReaderActivity : AppCompatActivity() {
         seek.progress = pages.first()
         info.text = if (pages.size == 2) "Páginas ${pages[0] + 1}–${pages[1] + 1} de ${b.pageCount}"
         else "Página ${pages[0] + 1} de ${b.pageCount}"
+        flexInfo?.text = info.text
         savePosition()
 
         val w = pageView.width / pages.size

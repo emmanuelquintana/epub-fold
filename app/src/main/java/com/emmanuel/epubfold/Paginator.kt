@@ -46,8 +46,8 @@ object ImageCache {
  * así un libro con cientos de ilustraciones no agota la memoria.
  */
 class LazyImageDrawable(
-    private val book: EpubBook,
-    private val path: String,
+    val book: EpubBook,
+    val path: String,
     private val targetW: Int,
     private val targetH: Int,
 ) : Drawable() {
@@ -94,7 +94,11 @@ class Paginator(
     private val lineSpacing: Float,
     private val density: Float,
     val justify: Boolean = true,
+    private val bionic: Boolean = false,
+    private val bookStyles: Boolean = false,
 ) {
+    /** Estilos del libro ya leídos, por hoja de estilos. */
+    private val cssCache = HashMap<String, List<BookCss.Rule>>()
     val layouts = arrayOfNulls<StaticLayout>(book.spine.size)
     val pages = ArrayList<Page>()
     val chapterFirstPage = IntArray(book.spine.size)
@@ -177,6 +181,10 @@ class Paginator(
         val opts = setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
         var html = Regex("<body[^>]*>(.*)</body>", opts).find(raw)?.groupValues?.get(1)
             ?: raw.replace(Regex("<head.*?</head>", opts), "")
+        if (bookStyles) {
+            val rules = BookCss.rulesFor(raw, dir, { p -> book.readText(p) }, cssCache)
+            if (rules.isNotEmpty()) html = BookCss.apply(html, rules)
+        }
         html = html
             .replace(Regex("<script.*?</script>", opts), "")
             .replace(Regex("<style.*?</style>", opts), "")
@@ -220,6 +228,13 @@ class Paginator(
             while (e < sb.length && sb[e] != '\n') e++
             if (e < sb.length) e++
             sb.setSpan(AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER), s, e, Spannable.SPAN_PARAGRAPH)
+        }
+
+        // Lectura biónica: el inicio de cada palabra en negrita para guiar la vista
+        if (bionic) {
+            TextTools.bionicRanges(sb).forEach { r ->
+                sb.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), r.first, r.last + 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
         }
 
         // Quita espacios en blanco al inicio y al final

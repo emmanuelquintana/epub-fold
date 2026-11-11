@@ -60,6 +60,9 @@ jobs:
       # Repo público con sólo el último APK: la app lo consulta para avisar de actualizaciones.
       # Se publica un único commit huérfano (force push) para que el repo no crezca.
       - name: Publish update channel (optional)
+        # Si el envío se atasca o falla, el release de GitHub se publica igualmente
+        timeout-minutes: 5
+        continue-on-error: true
         env:
           RELEASES_DEPLOY_KEY: ${{ secrets.RELEASES_DEPLOY_KEY }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
@@ -71,7 +74,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "$RELEASES_DEPLOY_KEY" > ~/.ssh/releases_key
           chmod 600 ~/.ssh/releases_key
-          export GIT_SSH_COMMAND="ssh -i ~/.ssh/releases_key -o StrictHostKeyChecking=accept-new"
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/releases_key -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=15"
           N=${{ github.run_number }}
           mkdir channel && cd channel
           git init -q -b main

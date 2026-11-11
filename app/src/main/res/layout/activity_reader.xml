@@ -232,6 +232,19 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/toolAssistant"
+                    style="@style/ReaderTool">
+                    <ImageView
+                        android:id="@+id/iconAssistant"
+                        style="@style/ReaderToolIcon"
+                        android:src="@drawable/ic_sparkle" />
+                    <TextView
+                        android:id="@+id/labelAssistant"
+                        style="@style/ReaderToolLabel"
+                        android:text="Asistente" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:id="@+id/toolThemes"
                     style="@style/ReaderTool">
                     <ImageView

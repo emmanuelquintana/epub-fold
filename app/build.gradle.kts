@@ -70,6 +70,13 @@ android {
         jvmTarget = "17"
     }
 
+    packaging {
+        resources {
+            excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*",
+                "META-INF/INDEX.LIST", "META-INF/*.kotlin_module", "META-INF/versions/9/OSGI-INF/MANIFEST.MF")
+        }
+    }
+
     testOptions {
         // Las pruebas de la lógica pura corren en el ordenador; las llamadas a Android devuelven valores vacíos
         unitTests.isReturnDefaultValues = true
@@ -113,6 +120,9 @@ dependencies {
 
     // Cómics en CBR (RAR)
     implementation("com.github.junrar:junrar:7.5.5")
+
+    // Asistente de lectura con Claude (SDK oficial de Anthropic)
+    implementation("com.anthropic:anthropic-java:3.8.0")
 
     // Paleta de colores de las portadas (generador de temas)
     implementation("androidx.palette:palette-ktx:1.0.0")
