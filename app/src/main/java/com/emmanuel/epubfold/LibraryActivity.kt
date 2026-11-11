@@ -308,6 +308,15 @@ class LibraryActivity : AppCompatActivity() {
     }
 
     /** Busca en Open Library portadas para los libros que no tienen. */
+    /** Sinopsis, géneros y páginas desde Google Books para los libros que aún no los tienen. */
+    private fun autoInfo() {
+        if (library.everything().all { BookInfoStore.looked(this, it.id) }) return
+        lifecycleScope.launch {
+            val n = withContext(Dispatchers.IO) { runCatching { BookInfoFetch.fillMissing(this@LibraryActivity) }.getOrDefault(0) }
+            if (n > 0) refresh()
+        }
+    }
+
     private fun autoCovers() {
         if (library.everything().none { it.coverPath == null && !it.coverLookedUp }) return
         lifecycleScope.launch {
@@ -331,6 +340,7 @@ class LibraryActivity : AppCompatActivity() {
         refresh()
         autoSync()
         autoCovers()
+        autoInfo()
         scanInbox()
         Updater.check(this, manual = false)
         Widgets.updateAll(this)
@@ -394,6 +404,10 @@ class LibraryActivity : AppCompatActivity() {
                 shelf == "want" -> b.collection == Shelf.WANT
                 shelf == "finished" -> b.collection == Shelf.FINISHED
                 shelf.startsWith("tag:") -> shelf.removePrefix("tag:") in b.tags
+                // Colecciones inteligentes
+                shelf == "new" -> b.collection == Shelf.NEW
+                shelf == "short" -> BookInfoStore.isShort(this, b)
+                shelf.startsWith("genre:") -> shelf.removePrefix("genre:") in BookInfoStore.genresOf(this, b)
                 else -> true
             }
             shelfOk && (q.isEmpty() || b.title.lowercase().contains(q) || b.author.lowercase().contains(q) ||
@@ -428,6 +442,9 @@ class LibraryActivity : AppCompatActivity() {
         k == "reading" -> "Leyendo"
         k == "want" -> "Quiero leer"
         k == "finished" -> "Terminados"
+        k == "new" -> "Sin empezar"
+        k == "short" -> "Cortos"
+        k.startsWith("genre:") -> k.removePrefix("genre:")
         else -> k.removePrefix("tag:")
     }
 
@@ -897,6 +914,7 @@ class LibraryActivity : AppCompatActivity() {
             menu.add(0, 7, 4, if (entry.series.isEmpty()) "Añadir a una serie…" else "Serie: ${entry.series}…")
             menu.add(0, 9, 4, if (entry.tags.isEmpty()) "Estanterías…" else "Estanterías: ${entry.tags.joinToString(", ")}…")
             menu.add(0, 8, 5, "Cambiar portada…")
+            menu.add(0, 13, 0, "Detalles…")
             menu.add(0, 11, 5, "Editar título y autor…")
             if (entry.coverPath != null) menu.add(0, 12, 5, "Crear tema de lectura con su portada…")
             menu.add(0, 10, 6, if (entry.hidden) "Quitar de privados" else "Mover a privados")
@@ -933,6 +951,7 @@ class LibraryActivity : AppCompatActivity() {
                     9 -> chooseShelves(entry)
                     8 -> changeCover(entry)
                     11 -> editTitle(entry)
+                    13 -> BookDetailsSheet.show(this@LibraryActivity, lifecycleScope, entry) { refresh() }
                     12 -> BookThemeSheet(this@LibraryActivity, ReaderPrefs(this@LibraryActivity), entry) {
                         Toast.makeText(this@LibraryActivity, "Tema aplicado: lo verás al abrir un libro", Toast.LENGTH_LONG).show()
                     }.show()
@@ -1092,7 +1111,15 @@ class LibraryActivity : AppCompatActivity() {
                 chips.addView(chip("Bloquear", false) { lockPrivate() })
                 return
             }
-            val keys = listOf("all", "reading", "want", "finished") + library.allTags().map { "tag:$it" }
+            val books = library.all()
+            // Colecciones inteligentes: sólo las que tienen algún libro
+            val smart = ArrayList<String>()
+            if (books.any { it.collection == Shelf.NEW }) smart += "new"
+            if (books.any { BookInfoStore.isShort(this@LibraryActivity, it) }) smart += "short"
+            books.flatMap { BookInfoStore.genresOf(this@LibraryActivity, it) }
+                .groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.take(6)
+                .forEach { smart += "genre:${it.key}" }
+            val keys = listOf("all", "reading", "want", "finished") + library.allTags().map { "tag:$it" } + smart
             if (prefs.libraryShelf !in keys) prefs.libraryShelf = "all"
             keys.forEach { k ->
                 val on = k == prefs.libraryShelf
