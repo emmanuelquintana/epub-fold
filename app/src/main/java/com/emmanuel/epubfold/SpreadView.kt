@@ -59,6 +59,19 @@ class SpreadView(context: Context) : View(context) {
 
     var rtl = false
     var animation = PageAnimation.CURL
+
+    /** Lectura viñeta a viñeta: los bordes y deslizar mueven entre viñetas. */
+    var panelMode = false
+    /** Paso a la viñeta siguiente/anterior; false si no quedan en la página (entonces se pasa página). */
+    var onPanelStep: ((forward: Boolean) -> Boolean)? = null
+
+    /** Contraste, brillo y blanco y negro aplicados al dibujar las páginas. */
+    var imageFilter: android.graphics.ColorFilter? = null
+        set(value) {
+            field = value
+            paint.colorFilter = value
+            invalidate()
+        }
     var bgColor = 0xFF151517.toInt()
 
     var slotIndex = 0
@@ -521,6 +534,58 @@ class SpreadView(context: Context) : View(context) {
         }
     }
 
+    /**
+     * Encuadra la zona [r] de la página (rectángulo normalizado 0..1 de la primera página
+     * visible) para que llene la pantalla; null vuelve a la página entera.
+     */
+    fun focusOn(r: FloatArray?, animate: Boolean = true) {
+        if (width == 0) return
+        val page = rectsFor(aspects).firstOrNull() ?: return
+        if (r == null) {
+            if (animate) animateZoomTo(1f, 0f, 0f) else { resetZoom(); invalidate() }
+            return
+        }
+        val pad = 0.012f
+        val l = page.left + page.width() * (r[0] - pad).coerceAtLeast(0f)
+        val t = page.top + page.height() * (r[1] - pad).coerceAtLeast(0f)
+        val rr = page.left + page.width() * (r[2] + pad).coerceAtMost(1f)
+        val b = page.top + page.height() * (r[3] + pad).coerceAtMost(1f)
+        val s = min(width / (rr - l), height / (b - t)).coerceIn(1f, MAX_ZOOM)
+        val endX = width / 2f - (l + rr) / 2f * s
+        val endY = height / 2f - (t + b) / 2f * s
+        if (animate) animateZoomTo(s, endX, endY) else {
+            scale = s; tx = endX; ty = endY
+            invalidate()
+            settleZoom()
+        }
+    }
+
+    private fun animateZoomTo(toScale: Float, endX: Float, endY: Float) {
+        zoomAnimator?.cancel()
+        scroller.forceFinished(true)
+        val s0 = scale
+        val x0 = tx
+        val y0 = ty
+        zoomAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 340
+            interpolator = DecelerateInterpolator(1.6f)
+            addUpdateListener {
+                val v = it.animatedValue as Float
+                scale = s0 + (toScale - s0) * v
+                tx = x0 + (endX - x0) * v
+                ty = y0 + (endY - y0) * v
+                invalidate()
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    if (toScale <= 1.01f) resetZoom()
+                    settleZoom()
+                }
+            })
+            start()
+        }
+    }
+
     private val settle = Runnable { onZoomSettled?.invoke(scale) }
 
     private fun settleZoom() {
@@ -569,6 +634,14 @@ class SpreadView(context: Context) : View(context) {
             if (multiTouch) return true
             val third = width / 3f
             val zoomed = scale > 1.01f
+            if (panelMode) {
+                when {
+                    e.x < third -> panelStep(rtl)
+                    e.x > width - third -> panelStep(!rtl)
+                    else -> onCenterTap?.invoke()
+                }
+                return true
+            }
             when {
                 // Con zoom, los bordes no pasan página: así se puede tocar sin miedo mientras se lee
                 !zoomed && e.x < third -> animateTurn(rtl)
@@ -579,6 +652,11 @@ class SpreadView(context: Context) : View(context) {
         }
 
         override fun onDoubleTap(e: MotionEvent): Boolean {
+            if (panelMode) {
+                // Ver la página entera un momento; el siguiente paso vuelve a la viñeta
+                if (scale > 1.01f) focusOn(null) else onPanelStep?.invoke(true)?.let { if (!it) animateTurn(true) }
+                return true
+            }
             if (scale > 1.01f) animateZoom(1f, e.x, e.y) else animateZoom(DOUBLE_TAP_ZOOM, e.x, e.y)
             return true
         }
@@ -593,6 +671,11 @@ class SpreadView(context: Context) : View(context) {
         }
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+            if (panelMode && !multiTouch && abs(vx) > abs(vy) * 1.3f && abs(vx) > flingVelocity) {
+                // Deslizar hacia la izquierda: siguiente viñeta (al revés en manga)
+                panelStep((vx < 0) != rtl)
+                return true
+            }
             if (scale <= 1.01f || multiTouch) return false
             val b = panBounds(scale)
             // En el borde de la página y deslizando hacia fuera: siguiente o anterior
@@ -610,6 +693,11 @@ class SpreadView(context: Context) : View(context) {
             return true
         }
     })
+
+    private fun panelStep(forward: Boolean) {
+        val moved = onPanelStep?.invoke(forward) ?: false
+        if (!moved) animateTurn(forward)
+    }
 
     // ---------------------------------------------------------------- gestos
 

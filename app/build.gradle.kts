@@ -7,6 +7,8 @@ plugins {
 val hasFirebaseConfig = file("google-services.json").exists()
 if (hasFirebaseConfig) {
     apply(plugin = "com.google.gms.google-services")
+    // Informes de fallos: sólo con Firebase configurado (necesita el id de compilación)
+    apply(plugin = "com.google.firebase.crashlytics")
 }
 
 val ciVersionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
@@ -48,7 +50,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 quita el código de las librerías que no se usa: APK más ligero y rápido
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = if (hasReleaseKeystore) {
                 signingConfigs.getByName("release")
             } else {
@@ -63,6 +68,11 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    testOptions {
+        // Las pruebas de la lógica pura corren en el ordenador; las llamadas a Android devuelven valores vacíos
+        unitTests.isReturnDefaultValues = true
     }
 }
 
@@ -85,6 +95,7 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
+    implementation("com.google.firebase:firebase-crashlytics")
 
     // Iniciar sesión con Google (Credential Manager)
     implementation("androidx.credentials:credentials:1.3.0")
@@ -105,4 +116,6 @@ dependencies {
 
     // Paleta de colores de las portadas (generador de temas)
     implementation("androidx.palette:palette-ktx:1.0.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

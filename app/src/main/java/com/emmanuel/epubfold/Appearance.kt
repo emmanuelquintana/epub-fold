@@ -78,6 +78,7 @@ private fun ReaderPrefs.wantsDark(): Boolean = when (appNightMode()) {
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        CrashReports.apply(this)
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                 // Con un tema de estantería, los controles de Android usan el acento predefinido más parecido

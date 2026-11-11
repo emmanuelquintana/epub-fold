@@ -49,7 +49,7 @@ jobs:
         run: |
           chmod +x gradlew
           echo "sdk.dir=$ANDROID_HOME" > local.properties
-          ./gradlew --no-daemon assembleRelease
+          ./gradlew --no-daemon testReleaseUnitTest assembleRelease
           cp app/build/outputs/apk/release/app-release.apk EpubFold-${{ github.run_number }}.apk
 
       - uses: actions/upload-artifact@v4

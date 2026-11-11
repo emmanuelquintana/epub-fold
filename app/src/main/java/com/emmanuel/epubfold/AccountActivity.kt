@@ -140,6 +140,17 @@ class AccountActivity : AppCompatActivity() {
         appGroup.addView(row("Buscar actualizaciones", "Versión instalada: ${BuildConfig.VERSION_NAME}") {
             Updater.check(this, manual = true)
         })
+        if (CrashReports.available(this)) {
+            appGroup.addView(hairline(this, dpi(16)))
+            val on = CrashReports.enabled(this)
+            appGroup.addView(row(
+                if (on) "Informes de fallos: activados" else "Informes de fallos: desactivados",
+                "Si la app se cierra sola, se envía un informe técnico anónimo (sin tus libros ni notas) para poder arreglarlo. Toca para cambiar.",
+            ) {
+                CrashReports.setEnabled(this, !on)
+                build()
+            })
+        }
     }
 
     private fun stamp() = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
