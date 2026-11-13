@@ -58,10 +58,10 @@ function feature() {
 }
 
 const jobs = [
-  ['telefono-1.png', 1080, 1920, phone({ shot: 'p_curl.png', bg: 'bg_light.png', dark: false, title: 'Pasa página<br>como en <span class="acc">papel</span>', sub: 'Una animación realista que sigue tu dedo' })],
-  ['telefono-2.png', 1080, 1920, phone({ shot: 'p_highlight.png', bg: 'bg_dark.png', dark: true, title: 'Subraya, traduce<br>y <span class="acc">escucha</span>', sub: 'Cinco colores, notas y lectura en voz alta' })],
-  ['telefono-3.png', 1080, 1920, phone({ shot: 'p_stats.png', bg: 'bg_light.png', dark: false, title: 'Crea el hábito<br>de <span class="acc">leer</span>', sub: 'Metas diarias, rachas y tu reto del año' })],
-  ['telefono-4.png', 1080, 1920, phone({ shot: 'p_read.png', bg: 'bg_dark.png', dark: true, title: 'Lectura cómoda,<br><span class="acc">sin distracciones</span>', sub: 'Tipografía cuidada y temas para cada momento' })],
+  ['telefono-1.png', 1080, 1920, phone({ shot: 'p_curl.png', bg: 'bg_dark.png', dark: true, title: 'Pasa página<br>como en <span class="acc">papel</span>', sub: 'Una animación realista que sigue tu dedo' })],
+  ['telefono-2.png', 1080, 1920, phone({ shot: 'p_stats.png', bg: 'bg_light.png', dark: false, title: 'Crea el hábito<br>de <span class="acc">leer</span>', sub: 'Metas diarias, rachas y tu reto del año' })],
+  ['telefono-3.png', 1080, 1920, phone({ shot: 'p_highlight.png', bg: 'bg_dark.png', dark: true, title: 'Subraya, traduce<br>y <span class="acc">escucha</span>', sub: 'Cinco colores, notas y lectura en voz alta' })],
+  ['telefono-4.png', 1080, 1920, phone({ shot: 'p_read.png', bg: 'bg_light.png', dark: false, title: 'Lectura cómoda,<br><span class="acc">sin distracciones</span>', sub: 'Tipografía cuidada y temas para cada momento' })],
   ['tablet-1.png', 2560, 1440, tablet({ shot: 't_curl.png', title: 'Un libro abierto<br>en tus manos', sub: 'Doble página en tu plegable, con el giro de un libro de verdad' })],
   ['tablet-5.png', 2560, 1440, tablet({ shot: 't_library.png', title: 'Tu biblioteca,<br>a tu manera', sub: 'Estanterías, búsqueda y portadas para cada libro' })],
   ['tablet-6.png', 2560, 1440, tablet({ shot: 't_highlight.png', title: 'Subraya, traduce<br>y escucha', sub: 'Cinco colores, notas, traducción y lectura en voz alta' })],
