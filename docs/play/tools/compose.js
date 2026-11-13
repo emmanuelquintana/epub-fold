@@ -64,6 +64,7 @@ const jobs = [
   ['telefono-4.png', 1080, 1920, phone({ shot: 'p_read.png', bg: 'bg_dark.png', dark: true, title: 'Lectura cómoda,<br><span class="acc">sin distracciones</span>', sub: 'Tipografía cuidada y temas para cada momento' })],
   ['tablet-1.png', 2560, 1440, tablet({ shot: 't_curl.png', title: 'Un libro abierto<br>en tus manos', sub: 'Doble página en tu plegable, con el giro de un libro de verdad' })],
   ['tablet-5.png', 2560, 1440, tablet({ shot: 't_library.png', title: 'Tu biblioteca,<br>a tu manera', sub: 'Estanterías, búsqueda y portadas para cada libro' })],
+  ['tablet-6.png', 2560, 1440, tablet({ shot: 't_highlight.png', title: 'Subraya, traduce<br>y escucha', sub: 'Cinco colores, notas, traducción y lectura en voz alta' })],
   ['tablet-2.png', 2560, 1440, tablet({ shot: 't_notes.png', title: 'Diseñada para<br>plegables', sub: 'Índice, notas, cuaderno y traducción en un panel lateral' })],
   ['tablet-3.png', 2560, 1440, tablet({ shot: 't_themes.png', title: 'Nueve temas<br>de lectura', sub: 'Del papel cálido al negro OLED, con su propio brillo' })],
   ['tablet-4.png', 2560, 1440, tablet({ shot: 't_gutenberg.png', title: 'Miles de clásicos<br>gratis', sub: 'Descarga libros de Project Gutenberg y otros catálogos' })],
