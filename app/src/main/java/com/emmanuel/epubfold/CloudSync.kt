@@ -83,6 +83,31 @@ object CloudSync {
 
     private fun userDoc(uid: String) = FirebaseFirestore.getInstance().collection("users").document(uid)
 
+    /**
+     * Elimina la cuenta y todo lo guardado en la nube: progreso, notas, estadísticas y la
+     * participación en clubes. Lo que hay en el teléfono no se toca. Si Firebase pide volver
+     * a iniciar sesión por seguridad, lanza una excepción con ese mensaje.
+     */
+    suspend fun deleteAccount(context: Context) {
+        val u = FirebaseAuth.getInstance().currentUser ?: throw IllegalStateException("No hay sesión iniciada")
+        val doc = userDoc(u.uid)
+        // Sale de los clubes (borra su progreso allí)
+        runCatching { Clubs.myClubs(context).forEach { runCatching { Clubs.leave(context, it.id) } } }
+        // Subcolecciones conocidas y el documento del usuario
+        for (sub in listOf("books", "meta", "notebooks", "vocab")) {
+            val docs = runCatching { doc.collection(sub).get().await().documents }.getOrDefault(emptyList())
+            docs.forEach { runCatching { it.reference.delete().await() } }
+        }
+        runCatching { doc.delete().await() }
+        try {
+            u.delete().await()
+        } catch (e: com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException) {
+            throw IllegalStateException("Por seguridad, cierra sesión, vuelve a entrar y elimina la cuenta otra vez.")
+        }
+        signOut(context)
+        ReaderPrefs(context).lastSync = 0L
+    }
+
     /** Sube en segundo plano un libro tras leer (si hay sesión). */
     fun schedulePush(context: Context, bookId: String) {
         val u = user(context) ?: return

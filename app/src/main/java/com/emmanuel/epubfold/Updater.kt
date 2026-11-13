@@ -52,6 +52,8 @@ object Updater {
 
     /** Comprueba si hay versión nueva. En modo automático, como mucho cada 6 horas y sin insistir con versiones omitidas. */
     fun check(activity: AppCompatActivity, manual: Boolean) {
+        // En Google Play las actualizaciones llegan por la tienda
+        if (!BuildConfig.SELF_UPDATE) return
         val sp = prefs(activity)
         if (!manual && System.currentTimeMillis() - sp.getLong("lastCheck", 0L) < AUTO_INTERVAL) return
         activity.lifecycleScope.launch {

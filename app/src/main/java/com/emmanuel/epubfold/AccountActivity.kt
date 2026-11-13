@@ -137,8 +137,15 @@ class AccountActivity : AppCompatActivity() {
         spacer(24)
         caption("Aplicación")
         val appGroup = group()
-        appGroup.addView(row("Buscar actualizaciones", "Versión instalada: ${BuildConfig.VERSION_NAME}") {
+        if (BuildConfig.SELF_UPDATE) appGroup.addView(row("Buscar actualizaciones", "Versión instalada: ${BuildConfig.VERSION_NAME}") {
             Updater.check(this, manual = true)
+        }) else appGroup.addView(row("Versión ${BuildConfig.VERSION_NAME}", "Las actualizaciones llegan por Google Play") {})
+        appGroup.addView(hairline(this, dpi(16)))
+        appGroup.addView(row("Política de privacidad", "Qué datos usa la app y cómo borrarlos") {
+            runCatching {
+                startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse("https://emmanuelquintana.github.io/epub-fold-releases/privacy.html")))
+            }
         })
         if (CrashReports.available(this)) {
             appGroup.addView(hairline(this, dpi(16)))
@@ -251,6 +258,22 @@ class AccountActivity : AppCompatActivity() {
                 .setNegativeButton("Cancelar", null)
                 .setPositiveButton("Cerrar sesión") { _, _ ->
                     lifecycleScope.launch { CloudSync.signOut(this@AccountActivity); build() }
+                }
+                .show()
+        })
+        cloud.addView(hairline(this, dpi(16)))
+        cloud.addView(row("Eliminar cuenta", "Borra la cuenta y todo lo guardado en la nube", destructive = true) {
+            MaterialAlertDialogBuilder(this)
+                .setTitle("¿Eliminar tu cuenta?")
+                .setMessage("Se borran para siempre tu cuenta y lo guardado en la nube (progreso, notas, estadísticas y clubes). " +
+                    "Los libros y notas de este teléfono se quedan.")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Eliminar") { _, _ ->
+                    lifecycleScope.launch {
+                        val r = runCatching { CloudSync.deleteAccount(this@AccountActivity) }
+                        toast(if (r.isSuccess) "Cuenta eliminada" else (r.exceptionOrNull()?.message ?: "No se pudo eliminar"))
+                        build()
+                    }
                 }
                 .show()
         })

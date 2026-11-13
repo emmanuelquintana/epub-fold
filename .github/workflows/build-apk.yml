@@ -49,13 +49,17 @@ jobs:
         run: |
           chmod +x gradlew
           echo "sdk.dir=$ANDROID_HOME" > local.properties
-          ./gradlew --no-daemon testReleaseUnitTest assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk EpubFold-${{ github.run_number }}.apk
+          # APK para instalar a mano (versión completa) y AAB para Google Play (versión play)
+          ./gradlew --no-daemon testFullReleaseUnitTest assembleFullRelease bundlePlayRelease
+          cp app/build/outputs/apk/full/release/app-full-release.apk EpubFold-${{ github.run_number }}.apk
+          cp app/build/outputs/bundle/playRelease/app-play-release.aab EpubFold-play-${{ github.run_number }}.aab
 
       - uses: actions/upload-artifact@v4
         with:
-          name: EpubFold-apk
-          path: EpubFold-*.apk
+          name: EpubFold-${{ github.run_number }}
+          path: |
+            EpubFold-*.apk
+            EpubFold-play-*.aab
 
       # Repo público con sólo el último APK: la app lo consulta para avisar de actualizaciones.
       # Se publica un único commit huérfano (force push) para que el repo no crezca.
@@ -83,7 +87,10 @@ jobs:
           jq -n --argjson code "$N" --arg name "1.0.$N" --arg notes "$NOTES" --arg sha "${{ github.sha }}" \
             --arg apk "https://raw.githubusercontent.com/emmanuelquintana/epub-fold-releases/main/EpubFold.apk" \
             '{versionCode: $code, versionName: $name, notes: $notes, sha: $sha, apk: $apk}' > latest.json
-          printf '# EpubFold\n\nÚltimo APK: [EpubFold.apk](EpubFold.apk) (build %s).\n' "$N" > README.md
+          printf '# EpubFold\n\nÚltimo APK: [EpubFold.apk](EpubFold.apk) (build %s).\n\n[Política de privacidad](privacy.html) · [Eliminar tu cuenta](delete-account.html)\n' "$N" > README.md
+          # Páginas públicas que pide Google Play (servidas con GitHub Pages)
+          cp ../docs/play/privacy.html ../docs/play/delete-account.html .
+          touch .nojekyll
           git add -A
           git -c user.name="EpubFold CI" -c user.email="ci@epubfold.invalid" commit -q -m "Build $N"
           git push -q --force git@github.com:emmanuelquintana/epub-fold-releases.git main
@@ -96,7 +103,9 @@ jobs:
           name: EpubFold build ${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           prerelease: ${{ github.ref_name != 'main' }}
-          files: EpubFold-*.apk
+          files: |
+            EpubFold-*.apk
+            EpubFold-play-*.aab
           body: |
             APK de EpubFold (rama `${{ github.ref_name }}`, commit ${{ github.sha }}).
             Descárgalo en el teléfono y ábrelo para instalar (permite "instalar apps desconocidas").

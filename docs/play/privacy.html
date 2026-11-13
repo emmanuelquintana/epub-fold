@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EpubFold · Política de privacidad</title>
+<style>
+  :root { --bg:#fff; --fg:#1c1c1e; --muted:#6c6c70; --accent:#c56a00; --card:#f2f2f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#000; --fg:#f2f2f7; --muted:#a1a1a6; --accent:#ff9f0a; --card:#1c1c1e; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:17px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:32px 16px 64px; }
+  h1 { font-size:30px; margin:0 0 4px; } h2 { font-size:20px; margin:32px 0 8px; }
+  .muted { color:var(--muted); } a { color:var(--accent); }
+  .card { background:var(--card); border-radius:12px; padding:14px 16px; margin:12px 0; }
+  ul { padding-left:20px; } li { margin:4px 0; }
+</style>
+</head>
+<body><main>
+<h1>Política de privacidad de EpubFold</h1>
+<p class="muted">Desarrollador: Kodaura · Contacto: <a href="mailto:TU_CORREO@ejemplo.com">TU_CORREO@ejemplo.com</a> · Última actualización: 13 de noviembre de 2026</p>
+
+<div class="card">En resumen: tus libros se quedan en tu teléfono. Solo sale de él lo que tú decides usar: la sincronización con tu cuenta, el asistente con IA, las búsquedas de portadas y datos de libros, y los informes de fallos (que puedes desactivar). No hay publicidad ni vendemos datos.</div>
+
+<h2>1. Lo que se queda en tu teléfono</h2>
+<p>Los libros (EPUB, PDF, cómics) que añades, tus marcadores, subrayados, notas, estadísticas y ajustes se guardan en el almacenamiento privado de la app. No los subimos a ningún servidor salvo que actives la sincronización.</p>
+
+<h2>2. Cuenta y sincronización (opcional)</h2>
+<p>Si creas una cuenta (correo y contraseña, o con Google), usamos Firebase Authentication y Cloud Firestore de Google para guardar tu correo, el progreso de lectura, colecciones, marcadores, subrayados, notas y estadísticas, y así recuperarlos en otro dispositivo. <strong>Los archivos de los libros no se suben.</strong> Cada persona solo puede acceder a sus propios datos.</p>
+<p>Si te unes a un <strong>club de lectura</strong>, los demás miembros ven el nombre que muestras, tu progreso en el libro del club y los comentarios que publiques.</p>
+
+<h2>3. Asistente con IA (opcional)</h2>
+<p>El asistente usa Claude, de Anthropic, con una clave de API que tú introduces y que se guarda solo en tu teléfono. Cuando pides un resumen, una lista de personajes o haces una pregunta, la app envía a Anthropic el texto del libro que ya has leído (hasta tu página actual) y tu pregunta. Ese envío lo haces tú y se rige por las condiciones y la política de privacidad de Anthropic asociadas a tu clave. Nosotros no recibimos ese contenido. Puedes reportar una respuesta inadecuada desde la propia respuesta.</p>
+
+<h2>4. Búsquedas en servicios externos</h2>
+<p>Algunas funciones envían el título y el autor de un libro, o una palabra, a servicios públicos para mostrarte información: Google Books y Open Library (datos y portadas), Apple Books y AniList (portadas), Wikcionario (definiciones) y los buscadores de imágenes que abras dentro de la app (Google, Bing, DuckDuckGo). La traducción se hace en el propio teléfono con ML Kit de Google, que descarga los idiomas la primera vez.</p>
+
+<h2>5. Informes de fallos</h2>
+<p>Si la app se cierra inesperadamente, Firebase Crashlytics envía un informe técnico (modelo del dispositivo, versión de Android y de la app, el error y un identificador de instalación) para poder corregirlo. No incluye tus libros ni tus notas. Puedes desactivarlo en <em>Cuenta → Aplicación → Informes de fallos</em>.</p>
+
+<h2>6. Permisos</h2>
+<ul>
+  <li><strong>Internet</strong>: sincronización, asistente, portadas y datos de libros.</li>
+  <li><strong>Notificaciones</strong>: recordatorio de lectura y controles de la lectura en voz alta.</li>
+  <li><strong>Servicio en primer plano (reproducción)</strong>: seguir leyendo en voz alta con la pantalla apagada.</li>
+  <li><strong>Archivos</strong>: solo los que eliges con el selector de Android.</li>
+</ul>
+
+<h2>7. Tus derechos y cómo borrar tus datos</h2>
+<ul>
+  <li>Puedes cerrar sesión o <strong>eliminar tu cuenta</strong> desde <em>Cuenta → Eliminar cuenta</em>: se borran la cuenta y todo lo guardado en la nube.</li>
+  <li>También puedes pedirlo sin la app: <a href="delete-account.html">cómo eliminar tu cuenta</a>.</li>
+  <li>Al desinstalar la app se borra todo lo guardado en el teléfono.</li>
+</ul>
+
+<h2>8. Seguridad y conservación</h2>
+<p>Las comunicaciones van cifradas (HTTPS). Los datos de la nube se conservan mientras tengas la cuenta y se eliminan cuando la borras. Los informes de fallos se conservan un máximo de 90 días.</p>
+
+<h2>9. Menores</h2>
+<p>EpubFold no está dirigida a menores de 13 años y no recopila a sabiendas datos de menores.</p>
+
+<h2>10. Cambios</h2>
+<p>Si esta política cambia, actualizaremos esta página y la fecha de arriba.</p>
+</main></body>
+</html>

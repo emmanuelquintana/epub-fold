@@ -249,12 +249,33 @@ class AssistantSheet(
         setPadding(0, ctx.dpi(6), 0, ctx.dpi(6))
     }
 
-    private fun body(t: String) = TextView(ctx).apply {
-        text = t.replace(Regex("\\*\\*(.+?)\\*\\*"), "$1").replace(Regex("^#+\\s*", RegexOption.MULTILINE), "")
-        setTextAppearance(R.style.Text_Body)
-        typeface = Typeface.SERIF
-        setLineSpacing(0f, 1.25f)
-        setTextIsSelectable(true)
+    /** Respuesta de la IA con un enlace para reportarla (requisito de Google Play para contenido generado). */
+    private fun body(t: String): View {
+        val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        box.addView(TextView(ctx).apply {
+            text = t.replace(Regex("\\*\\*(.+?)\\*\\*"), "$1").replace(Regex("^#+\\s*", RegexOption.MULTILINE), "")
+            setTextAppearance(R.style.Text_Body)
+            typeface = Typeface.SERIF
+            setLineSpacing(0f, 1.25f)
+            setTextIsSelectable(true)
+        })
+        box.addView(TextView(ctx).apply {
+            text = "Reportar respuesta"
+            setTextAppearance(R.style.Text_Footnote)
+            setPadding(0, ctx.dpi(6), 0, ctx.dpi(4))
+            setOnClickListener { reportAnswer(t) }
+        })
+        return box
+    }
+
+    private fun reportAnswer(answer: String) {
+        val i = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")).apply {
+            putExtra(Intent.EXTRA_EMAIL, arrayOf(BuildConfig.SUPPORT_EMAIL))
+            putExtra(Intent.EXTRA_SUBJECT, "EpubFold: respuesta inadecuada del asistente")
+            putExtra(Intent.EXTRA_TEXT, "Libro: ${entry.title}\nModelo: ${Assistant.model(ctx)}\n\nRespuesta:\n${answer.take(3000)}\n\nQué está mal:\n")
+        }
+        runCatching { ctx.startActivity(Intent.createChooser(i, "Reportar respuesta")) }
+            .onFailure { android.widget.Toast.makeText(ctx, "Escribe a ${BuildConfig.SUPPORT_EMAIL}", android.widget.Toast.LENGTH_LONG).show() }
     }
 
     private fun pill(label: String, onClick: () -> Unit) = TextView(ctx).apply {

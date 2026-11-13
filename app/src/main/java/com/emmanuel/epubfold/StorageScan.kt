@@ -57,7 +57,7 @@ object StorageScan {
     private fun prefs(context: Context) = context.getSharedPreferences("storage_scan", Context.MODE_PRIVATE)
 
     fun hasAccess(context: Context): Boolean =
-        if (Build.VERSION.SDK_INT >= 30) Environment.isExternalStorageManager()
+        if (Build.VERSION.SDK_INT >= 30) BuildConfig.ALL_FILES_ACCESS && Environment.isExternalStorageManager()
         else ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_EXTERNAL_STORAGE) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
 

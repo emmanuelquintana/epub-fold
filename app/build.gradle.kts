@@ -17,15 +17,19 @@ val hasReleaseKeystore = keystorePath != null && file(keystorePath).exists()
 
 android {
     namespace = "com.emmanuel.epubfold"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.emmanuel.epubfold"
         minSdk = 26
-        targetSdk = 35
+        // Google Play exige apuntar a la última versión de Android para apps nuevas
+        targetSdk = 36
         versionCode = ciVersionCode
         versionName = "1.0.$ciVersionCode"
         buildConfigField("boolean", "HAS_FIREBASE", hasFirebaseConfig.toString())
+        // Contacto público (ficha de Play, política de privacidad, «Reportar» del asistente)
+        buildConfigField("String", "SUPPORT_EMAIL", "\"${project.findProperty("supportEmail") ?: "TU_CORREO@ejemplo.com"}\"")
+        buildConfigField("String", "DEVELOPER", "\"Kodaura\"")
         // El Galaxy Z Fold (y casi todos los Android actuales) usan arm64:
         // así el APK no lleva librerías nativas de otras arquitecturas.
         ndk {
@@ -35,6 +39,23 @@ android {
 
     buildFeatures {
         buildConfig = true
+    }
+
+    // Dos versiones de la app:
+    //  - full: el APK que se instala a mano (busca en todo el almacenamiento y se actualiza sola)
+    //  - play: la de Google Play (sin «acceso a todos los archivos» ni autoactualización, que Play no permite)
+    flavorDimensions += "store"
+    productFlavors {
+        create("full") {
+            dimension = "store"
+            buildConfigField("boolean", "ALL_FILES_ACCESS", "true")
+            buildConfigField("boolean", "SELF_UPDATE", "true")
+        }
+        create("play") {
+            dimension = "store"
+            buildConfigField("boolean", "ALL_FILES_ACCESS", "false")
+            buildConfigField("boolean", "SELF_UPDATE", "false")
+        }
     }
 
     signingConfigs {

@@ -241,6 +241,12 @@ class LibraryActivity : AppCompatActivity() {
             readPermission.launch(android.Manifest.permission.READ_EXTERNAL_STORAGE)
             return
         }
+        if (!BuildConfig.ALL_FILES_ACCESS) {
+            // Versión de Google Play: se busca dentro de la carpeta que elijas (p. ej. Descargas o Telegram)
+            Toast.makeText(this, "Elige la carpeta donde guardas tus libros; se buscará también en sus subcarpetas.", Toast.LENGTH_LONG).show()
+            folderPicker.launch(null)
+            return
+        }
         com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
             .setTitle("Buscar libros en el teléfono")
             .setMessage(
