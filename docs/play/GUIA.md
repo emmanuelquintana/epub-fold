@@ -9,11 +9,8 @@ Desarrollador: **Kodaura** · Paquete: `com.emmanuel.epubfold` (no se puede camb
 - Política de privacidad y página de eliminación de cuenta: `docs/play/privacy.html` y `docs/play/delete-account.html` (se copian al repo público `epub-fold-releases`).
 - Textos de la ficha y respuestas de formularios: `docs/play/FICHA.md`. Icono y gráfico: `docs/play/graphics/`.
 
-## 1. Pon tu correo de soporte (5 min)
-Sustituye `TU_CORREO@ejemplo.com` por tu correo de soporte en:
-1. `app/build.gradle.kts` (línea `SUPPORT_EMAIL`): ahí lo usa el botón "Reportar respuesta".
-2. `docs/play/privacy.html` y `docs/play/delete-account.html`.
-Haz commit y espera la build nueva. Te recomiendo un correo exclusivo, por ejemplo `kodaura.apps@gmail.com`.
+## 1. Correo de soporte
+Ya configurado: **info@kodaura.online** (botón "Reportar respuesta", política de privacidad y eliminación de cuenta). Úsalo también como correo de contacto en Play Console. Para cambiarlo, edita `SUPPORT_EMAIL` en `app/build.gradle.kts` y los dos `.html` de `docs/play/`.
 
 ## 2. Activa GitHub Pages para la política de privacidad (2 min)
 1. GitHub → repo **epub-fold-releases** → *Settings* → *Pages*.

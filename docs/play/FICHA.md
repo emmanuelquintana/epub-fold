@@ -65,8 +65,8 @@ Sin anuncios. Tus libros se quedan en tu teléfono.
 
 **Categoría:** Libros y obras de consulta
 **Etiquetas sugeridas:** Lector de libros electrónicos, Cómics, Libros
-**Correo de contacto:** el tuyo de soporte (se muestra públicamente)
-**Sitio web:** https://emmanuelquintana.github.io/epub-fold-releases/privacy.html (opcional)
+**Correo de contacto:** info@kodaura.online (se muestra públicamente)
+**Sitio web:** https://kodaura.online (opcional, si ya tienes la web)
 **Política de privacidad:** https://emmanuelquintana.github.io/epub-fold-releases/privacy.html
 
 ## 2. Gráficos

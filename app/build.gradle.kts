@@ -28,7 +28,7 @@ android {
         versionName = "1.0.$ciVersionCode"
         buildConfigField("boolean", "HAS_FIREBASE", hasFirebaseConfig.toString())
         // Contacto público (ficha de Play, política de privacidad, «Reportar» del asistente)
-        buildConfigField("String", "SUPPORT_EMAIL", "\"${project.findProperty("supportEmail") ?: "TU_CORREO@ejemplo.com"}\"")
+        buildConfigField("String", "SUPPORT_EMAIL", "\"${project.findProperty("supportEmail") ?: "info@kodaura.online"}\"")
         buildConfigField("String", "DEVELOPER", "\"Kodaura\"")
         // El Galaxy Z Fold (y casi todos los Android actuales) usan arm64:
         // así el APK no lleva librerías nativas de otras arquitecturas.
